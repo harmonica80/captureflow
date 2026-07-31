@@ -1,0 +1,7 @@
+.npm-cache/
+captureflow/node_modules/
+captureflow/dist/
+captureflow/src-tauri/target/
+captureflow/release/
+artifact-*/
+*.log

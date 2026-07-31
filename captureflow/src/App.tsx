@@ -1,0 +1,96 @@
+import "./App.css";
+import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
+
+type RectInfo = { x: number; y: number; width: number; height: number };
+type MonitorInfo = {
+  deviceName: string;
+  bounds: RectInfo;
+  dpiX: number;
+  dpiY: number;
+  scaleFactor: number;
+  isPrimary: boolean;
+};
+type DesktopSnapshot = {
+  imagePath: string;
+  metadataPath: string;
+  virtualDesktop: RectInfo;
+  monitors: MonitorInfo[];
+};
+
+function App() {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<DesktopSnapshot | null>(null);
+  const [error, setError] = useState("");
+
+  async function runPoc() {
+    setRunning(true);
+    setError("");
+    try {
+      setResult(await invoke<DesktopSnapshot>("capture_virtual_desktop"));
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <main className="app-shell">
+      <section className="hero">
+        <span className="eyebrow">CAPTUREFLOW · PHASE 0</span>
+        <h1>讓每一次截圖，都能繼續工作。</h1>
+        <p>
+          Windows 本機優先的螢幕截取、物件式標註、置頂貼圖與視覺工作流工具。
+        </p>
+        <div className="status"><i />PoC-A：virtual desktop 快照</div>
+        <button className="capture-button" onClick={runPoc} disabled={running}>
+          {running ? "正在擷取…" : "執行桌面快照測試"}
+        </button>
+      </section>
+
+      {(result || error) && (
+        <section className={`result-panel ${error ? "error" : ""}`} aria-live="polite">
+          {error ? (
+            <><h2>擷取失敗</h2><p>{error}</p></>
+          ) : result && (
+            <>
+              <div className="result-heading">
+                <div><span>CAPTURE COMPLETE</span><h2>已擷取 {result.monitors.length} 部顯示器</h2></div>
+                <strong>{result.virtualDesktop.width} × {result.virtualDesktop.height}</strong>
+              </div>
+              <div className="monitor-list">
+                {result.monitors.map((monitor) => (
+                  <div key={monitor.deviceName}>
+                    <b>{monitor.deviceName}{monitor.isPrimary ? " · 主要" : ""}</b>
+                    <span>{monitor.bounds.x}, {monitor.bounds.y} · {monitor.bounds.width} × {monitor.bounds.height}</span>
+                    <span>{monitor.dpiX} DPI · {Math.round(monitor.scaleFactor * 100)}%</span>
+                  </div>
+                ))}
+              </div>
+              <p className="path"><b>PNG</b>{result.imagePath}</p>
+              <p className="path"><b>JSON</b>{result.metadataPath}</p>
+            </>
+          )}
+        </section>
+      )}
+
+      <section className="roadmap" aria-label="首版開發路線">
+        <article className="active">
+          <span>01</span><h2>精準截圖</h2>
+          <p>多螢幕、混合 DPI、視窗偵測與可調整擷取範圍。</p>
+        </article>
+        <article>
+          <span>02</span><h2>物件式標註</h2>
+          <p>箭頭、文字、編號與不破壞底圖的遮蔽工具。</p>
+        </article>
+        <article>
+          <span>03</span><h2>貼圖與歷史</h2>
+          <p>置頂參考、重新裁切、搜尋與擷取配方。</p>
+        </article>
+      </section>
+    </main>
+  );
+}
+
+export default App;
