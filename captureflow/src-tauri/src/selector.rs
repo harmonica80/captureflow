@@ -147,7 +147,8 @@ mod platform {
             UI::{
                 HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
                 Input::KeyboardAndMouse::{
-                    ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN,
+                    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_DOWN, VK_ESCAPE, VK_LEFT,
+                    VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
                 },
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
@@ -375,6 +376,39 @@ mod platform {
                 }
                 LRESULT(0)
             }
+            WM_KEYDOWN
+                if matches!(
+                    wparam.0 as u16,
+                    key if key == VK_LEFT.0
+                        || key == VK_RIGHT.0
+                        || key == VK_UP.0
+                        || key == VK_DOWN.0
+                ) =>
+            {
+                if let Ok(mut guard) = STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        if state.interaction.is_none() {
+                            if let Some(selection) = state.selection {
+                                let distance = if GetKeyState(VK_SHIFT.0 as i32) < 0 {
+                                    10
+                                } else {
+                                    1
+                                };
+                                let (dx, dy) = match wparam.0 as u16 {
+                                    key if key == VK_LEFT.0 => (-distance, 0),
+                                    key if key == VK_RIGHT.0 => (distance, 0),
+                                    key if key == VK_UP.0 => (0, -distance),
+                                    _ => (0, distance),
+                                };
+                                state.selection =
+                                    Some(move_rect(selection, dx, dy, state.width, state.height));
+                            }
+                        }
+                    }
+                }
+                InvalidateRect(Some(hwnd), None, false);
+                LRESULT(0)
+            }
             WM_PAINT => {
                 paint(hwnd);
                 LRESULT(0)
@@ -423,9 +457,10 @@ mod platform {
 
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, COLORREF(0x00F0_FFFF));
-                let instructions: Vec<u16> = "拖曳選取範圍 · Enter 確認 · Esc 取消"
-                    .encode_utf16()
-                    .collect();
+                let instructions: Vec<u16> =
+                    "拖曳選取 · 方向鍵微調 · Shift + 方向鍵 10 px · Enter 確認 · Esc 取消"
+                        .encode_utf16()
+                        .collect();
                 TextOutW(dc, 24, 24, &instructions);
 
                 if let Some(rect) = state.selection {
@@ -621,6 +656,14 @@ mod platform {
             y: top,
             width: right - left,
             height: bottom - top,
+        }
+    }
+
+    fn move_rect(rect: RectInfo, dx: i32, dy: i32, width: i32, height: i32) -> RectInfo {
+        RectInfo {
+            x: (rect.x + dx).clamp(0, width - rect.width),
+            y: (rect.y + dy).clamp(0, height - rect.height),
+            ..rect
         }
     }
 }
