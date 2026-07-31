@@ -139,9 +139,9 @@ mod platform {
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
             Graphics::Gdi::{
                 BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject,
-                InvalidateRect, Rectangle, SelectObject, SetBkMode, SetTextColor, StretchDIBits,
-                TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH,
-                PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+                IntersectClipRect, InvalidateRect, Rectangle, RestoreDC, SaveDC, SelectObject,
+                SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
+                BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -430,21 +430,34 @@ mod platform {
 
                 if let Some(rect) = state.selection {
                     if rect.width > 0 && rect.height > 0 {
-                        StretchDIBits(
+                        // Keep the frozen desktop at a fixed 1:1 coordinate mapping. Only the
+                        // clipping rectangle changes while creating or resizing the selection.
+                        // Drawing the selection as a source/destination sub-rectangle makes GDI
+                        // reinterpret its source origin and causes the visible content to slide.
+                        let saved_dc = SaveDC(dc);
+                        IntersectClipRect(
                             dc,
                             rect.x,
                             rect.y,
-                            rect.width,
-                            rect.height,
-                            rect.x,
-                            rect.y,
-                            rect.width,
-                            rect.height,
+                            rect.x + rect.width,
+                            rect.y + rect.height,
+                        );
+                        StretchDIBits(
+                            dc,
+                            0,
+                            0,
+                            state.width,
+                            state.height,
+                            0,
+                            0,
+                            state.width,
+                            state.height,
                             Some(state.bgra.as_ptr().cast()),
                             &info,
                             DIB_RGB_COLORS,
                             SRCCOPY,
                         );
+                        RestoreDC(dc, saved_dc);
                         let pen = CreatePen(PS_SOLID, 3, COLORREF(0x0074_E7AD));
                         let old_pen = SelectObject(dc, pen.into());
                         let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
