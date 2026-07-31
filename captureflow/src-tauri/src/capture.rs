@@ -139,7 +139,7 @@ mod platform {
             Some(enum_monitor_callback),
             LPARAM((&mut monitors as *mut Vec<MonitorInfo>) as isize),
         );
-        if result == 0 {
+        if !result.as_bool() {
             return Err("EnumDisplayMonitors 無法列舉顯示器".into());
         }
         if monitors.is_empty() {
@@ -158,13 +158,13 @@ mod platform {
         if let Some(info) = read_monitor(monitor) {
             monitors.push(info);
         }
-        1
+        true.into()
     }
 
     unsafe fn read_monitor(monitor: HMONITOR) -> Option<MonitorInfo> {
         let mut info = MONITORINFOEXW::default();
         info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
-        if GetMonitorInfoW(monitor, &mut info as *mut _ as *mut MONITORINFO) == 0 {
+        if !GetMonitorInfoW(monitor, &mut info as *mut _ as *mut MONITORINFO).as_bool() {
             return None;
         }
 
