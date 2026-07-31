@@ -1,6 +1,6 @@
 use std::path::Path;
 
-pub fn open(image_path: String) -> Result<(), String> {
+pub fn open(image_path: String, x: i32, y: i32) -> Result<(), String> {
     let image = image::open(Path::new(&image_path))
         .map_err(|error| format!("無法讀取貼圖圖片：{error}"))?
         .into_rgba8();
@@ -15,7 +15,7 @@ pub fn open(image_path: String) -> Result<(), String> {
 
     std::thread::Builder::new()
         .name("captureflow-sticker".into())
-        .spawn(move || platform::run(width as i32, height as i32, bgra))
+        .spawn(move || platform::run(width as i32, height as i32, x, y, bgra))
         .map_err(|error| format!("無法啟動貼圖視窗：{error}"))?;
     Ok(())
 }
@@ -28,8 +28,9 @@ mod platform {
         Win32::{
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
             Graphics::Gdi::{
-                BeginPaint, EndPaint, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-                DIB_RGB_COLORS, PAINTSTRUCT, SRCCOPY,
+                BeginPaint, CreatePen, DeleteObject, EndPaint, GetStockObject, Rectangle,
+                SelectObject, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+                NULL_BRUSH, PAINTSTRUCT, PS_SOLID, SRCCOPY,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -41,8 +42,9 @@ mod platform {
                     SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
                     TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HWND_TOPMOST, LWA_ALPHA,
                     MSG, SWP_NOACTIVATE, SWP_NOMOVE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY,
-                    WM_KEYDOWN, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WM_RBUTTONUP, WNDCLASSW,
-                    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    WM_KEYDOWN, WM_MOUSEWHEEL, WM_NCHITTEST, WM_NCRBUTTONUP, WM_PAINT,
+                    WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+                    WS_POPUP,
                 },
             },
         },
@@ -59,8 +61,7 @@ mod platform {
         opacity: u8,
     }
 
-    pub fn run(source_width: i32, source_height: i32, bgra: Vec<u8>) {
-        let (window_width, window_height) = initial_size(source_width, source_height);
+    pub fn run(source_width: i32, source_height: i32, x: i32, y: i32, bgra: Vec<u8>) {
         STATE.with(|state| {
             *state.borrow_mut() = Some(StickerState {
                 source_width,
@@ -69,11 +70,11 @@ mod platform {
                 opacity: 255,
             });
         });
-        let _ = unsafe { run_window(window_width, window_height) };
+        let _ = unsafe { run_window(x, y, source_width, source_height) };
         STATE.with(|state| *state.borrow_mut() = None);
     }
 
-    unsafe fn run_window(width: i32, height: i32) -> Result<(), String> {
+    unsafe fn run_window(x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
         SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let module =
             GetModuleHandleW(None).map_err(|error| format!("GetModuleHandleW：{error}"))?;
@@ -93,8 +94,8 @@ mod platform {
             class_name,
             w!("CaptureFlow Sticker"),
             WS_POPUP,
-            80,
-            80,
+            x,
+            y,
             width,
             height,
             None,
@@ -145,7 +146,7 @@ mod platform {
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
-            WM_RBUTTONUP => {
+            WM_RBUTTONUP | WM_NCRBUTTONUP => {
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
@@ -191,6 +192,13 @@ mod platform {
                         DIB_RGB_COLORS,
                         SRCCOPY,
                     );
+                    let border_pen = CreatePen(PS_SOLID, 2, COLORREF(0x0074_E7AD));
+                    let old_pen = SelectObject(dc, border_pen.into());
+                    let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                    Rectangle(dc, 0, 0, client.right, client.bottom);
+                    SelectObject(dc, old_brush);
+                    SelectObject(dc, old_pen);
+                    DeleteObject(border_pen.into());
                 }
             }
         });
@@ -225,17 +233,9 @@ mod platform {
             }
         });
     }
-
-    fn initial_size(width: i32, height: i32) -> (i32, i32) {
-        let scale = (900.0 / width as f64).min(700.0 / height as f64).min(1.0);
-        (
-            (width as f64 * scale).round().max(80.0) as i32,
-            (height as f64 * scale).round().max(60.0) as i32,
-        )
-    }
 }
 
 #[cfg(not(windows))]
 mod platform {
-    pub fn run(_source_width: i32, _source_height: i32, _bgra: Vec<u8>) {}
+    pub fn run(_source_width: i32, _source_height: i32, _x: i32, _y: i32, _bgra: Vec<u8>) {}
 }

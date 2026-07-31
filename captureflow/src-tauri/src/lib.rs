@@ -15,8 +15,8 @@ async fn select_screen_area(
 }
 
 #[tauri::command]
-fn open_sticker(image_path: String) -> Result<(), String> {
-    sticker::open(image_path)
+fn open_sticker(image_path: String, x: i32, y: i32) -> Result<(), String> {
+    sticker::open(image_path, x, y)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

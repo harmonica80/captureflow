@@ -63,7 +63,11 @@ function App() {
     setOpeningSticker(true);
     setError("");
     try {
-      await invoke("open_sticker", { imagePath: selection.imagePath });
+      await invoke("open_sticker", {
+        imagePath: selection.imagePath,
+        x: selection.selection.x,
+        y: selection.selection.y,
+      });
     } catch (reason) {
       setError(String(reason));
     } finally {
