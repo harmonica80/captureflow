@@ -139,9 +139,9 @@ mod platform {
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
             Graphics::Gdi::{
                 BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject,
-                IntersectClipRect, InvalidateRect, Rectangle, RestoreDC, SaveDC, SelectObject,
-                SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
-                BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+                InvalidateRect, Rectangle, SelectObject, SetBkMode, SetTextColor, StretchDIBits,
+                TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH,
+                PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -172,6 +172,8 @@ mod platform {
         height: i32,
         bgra: Vec<u8>,
         dimmed_bgra: Vec<u8>,
+        composite_bgra: Vec<u8>,
+        composite_rect: Option<(i32, i32, i32, i32)>,
         interaction: Option<Interaction>,
         selection: Option<RectInfo>,
         hover_candidate: Option<RectInfo>,
@@ -220,6 +222,7 @@ mod platform {
             pixel[2] = (pixel[2] as u16 * 48 / 100) as u8;
         }
         let (sender, receiver) = mpsc::channel();
+        let composite_bgra = dimmed_bgra.clone();
         *STATE.lock().map_err(|_| "選取狀態鎖定失敗")? = Some(SelectorState {
             origin_x: virtual_desktop.x,
             origin_y: virtual_desktop.y,
@@ -227,6 +230,8 @@ mod platform {
             height: virtual_desktop.height,
             bgra: rgba,
             dimmed_bgra,
+            composite_bgra,
+            composite_rect: None,
             interaction: None,
             selection: None,
             hover_candidate: None,
@@ -456,8 +461,13 @@ mod platform {
     unsafe fn paint(hwnd: HWND) {
         let mut paint = PAINTSTRUCT::default();
         let dc = BeginPaint(hwnd, &mut paint);
-        if let Ok(guard) = STATE.lock() {
-            if let Some(state) = guard.as_ref() {
+        if let Ok(mut guard) = STATE.lock() {
+            if let Some(state) = guard.as_mut() {
+                let visible_rect = state
+                    .selection
+                    .or(state.hover_candidate)
+                    .filter(|rect| rect.width > 0 && rect.height > 0);
+                update_composite(state, visible_rect);
                 let info = BITMAPINFO {
                     bmiHeader: BITMAPINFOHEADER {
                         biSize: size_of::<BITMAPINFOHEADER>() as u32,
@@ -480,7 +490,7 @@ mod platform {
                     0,
                     state.width,
                     state.height,
-                    Some(state.dimmed_bgra.as_ptr().cast()),
+                    Some(state.composite_bgra.as_ptr().cast()),
                     &info,
                     DIB_RGB_COLORS,
                     SRCCOPY,
@@ -496,34 +506,6 @@ mod platform {
 
                 if let Some(rect) = state.selection.or(state.hover_candidate) {
                     if rect.width > 0 && rect.height > 0 {
-                        // Keep the frozen desktop at a fixed 1:1 coordinate mapping. Only the
-                        // clipping rectangle changes while creating or resizing the selection.
-                        // Drawing the selection as a source/destination sub-rectangle makes GDI
-                        // reinterpret its source origin and causes the visible content to slide.
-                        let saved_dc = SaveDC(dc);
-                        IntersectClipRect(
-                            dc,
-                            rect.x,
-                            rect.y,
-                            rect.x + rect.width,
-                            rect.y + rect.height,
-                        );
-                        StretchDIBits(
-                            dc,
-                            0,
-                            0,
-                            state.width,
-                            state.height,
-                            0,
-                            0,
-                            state.width,
-                            state.height,
-                            Some(state.bgra.as_ptr().cast()),
-                            &info,
-                            DIB_RGB_COLORS,
-                            SRCCOPY,
-                        );
-                        RestoreDC(dc, saved_dc);
                         let pen = CreatePen(PS_SOLID, 3, COLORREF(0x0074_E7AD));
                         let old_pen = SelectObject(dc, pen.into());
                         let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -708,6 +690,43 @@ mod platform {
             width: 0,
             height: 0,
         }
+    }
+
+    fn update_composite(state: &mut SelectorState, visible_rect: Option<RectInfo>) {
+        let next_key = visible_rect.map(rect_key);
+        if state.composite_rect == next_key {
+            return;
+        }
+        if let Some((x, y, width, height)) = state.composite_rect {
+            copy_rect_pixels(
+                &state.dimmed_bgra,
+                &mut state.composite_bgra,
+                state.width,
+                RectInfo {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+            );
+        }
+        if let Some(rect) = visible_rect {
+            copy_rect_pixels(&state.bgra, &mut state.composite_bgra, state.width, rect);
+        }
+        state.composite_rect = next_key;
+    }
+
+    fn copy_rect_pixels(source: &[u8], destination: &mut [u8], stride: i32, rect: RectInfo) {
+        let row_bytes = rect.width as usize * 4;
+        for y in rect.y..rect.y + rect.height {
+            let start = (y as usize * stride as usize + rect.x as usize) * 4;
+            destination[start..start + row_bytes]
+                .copy_from_slice(&source[start..start + row_bytes]);
+        }
+    }
+
+    fn rect_key(rect: RectInfo) -> (i32, i32, i32, i32) {
+        (rect.x, rect.y, rect.width, rect.height)
     }
 
     unsafe fn detect_window_at(
