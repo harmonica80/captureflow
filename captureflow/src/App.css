@@ -20,8 +20,11 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .hero p { max-width: 660px; color: #aebdb6; font-size: 18px; line-height: 1.75; }
 .status { display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; padding: 10px 14px; border: 1px solid #27483a; border-radius: 999px; color: #c9f7df; background: rgba(18, 53, 39, .55); font-size: 14px; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: #67e6a6; box-shadow: 0 0 14px #67e6a6; }
-.capture-button { display: block; margin-top: 18px; padding: 13px 18px; border: 0; border-radius: 12px; color: #062217; background: #74e7ad; font: inherit; font-weight: 750; cursor: pointer; }
-.capture-button:hover { background: #9bf2c5; transform: translateY(-1px); }
+.action-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.capture-button { display: block; padding: 13px 18px; border: 1px solid #315444; border-radius: 12px; color: #c9f7df; background: #142a21; font: inherit; font-weight: 750; cursor: pointer; }
+.capture-button.primary { border-color: transparent; color: #062217; background: #74e7ad; }
+.capture-button:hover { background: #244739; transform: translateY(-1px); }
+.capture-button.primary:hover { background: #9bf2c5; }
 .capture-button:disabled { cursor: wait; opacity: .65; transform: none; }
 
 .result-panel { margin-top: 36px; max-width: 900px; padding: 24px; border: 1px solid #326448; border-radius: 20px; background: rgba(8, 22, 17, .88); }
@@ -35,6 +38,8 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .monitor-list span, .path { color: #9aafa4; }
 .path { display: grid; grid-template-columns: 50px 1fr; gap: 8px; margin: 12px 0 0; overflow-wrap: anywhere; font-size: 13px; }
 .path b { color: #d5e5dd; }
+.selection-result { border-color: #65c896; }
+.selection-coordinates { color: #b6c9bf; }
 
 .roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: clamp(54px, 9vw, 110px); }
 .roadmap article { min-height: 190px; padding: 24px; border: 1px solid #21352d; border-radius: 20px; background: rgba(13, 29, 24, .72); }

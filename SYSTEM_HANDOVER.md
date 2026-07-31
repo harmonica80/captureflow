@@ -10,6 +10,7 @@
 - `螢幕截取創新工具開發建議書.md`：完整產品功能、架構及里程碑。
 - `PHASE0_EXECUTION.md`：目前階段的工作順序、驗收及環境盤點。
 - `POC_A_TESTING.md`：PoC-A 的輸出格式、多螢幕與 DPI 測試矩陣。
+- `POC_B_TESTING.md`：原生跨螢幕選取層的操作與驗收矩陣。
 
 ## 常用指令
 
@@ -40,4 +41,4 @@ npm.cmd run build:portable
 
 ## 下一個實作目標
 
-執行 `captureflow/release/CaptureFlow-portable.exe`，依 `POC_A_TESTING.md` 完成 PoC-A 實機驗證；通過後進入 PoC-B 透明選取覆蓋層。
+PoC-A 已在右側雙螢幕、125% + 100% 混合 DPI 配置通過。下一步由 GitHub Actions 編譯 PoC-B，下載 portable EXE 後依 `POC_B_TESTING.md` 完成原生跨螢幕選取測試。

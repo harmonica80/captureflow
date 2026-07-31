@@ -1,0 +1,442 @@
+use crate::capture::{capture_frame, MonitorInfo, RectInfo};
+use serde::Serialize;
+use std::{fs, path::PathBuf, time::SystemTime};
+use tauri::{AppHandle, Manager};
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectionSnapshot {
+    pub image_path: String,
+    pub metadata_path: String,
+    pub selection: RectInfo,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectionMetadata<'a> {
+    schema_version: u32,
+    captured_at_unix_ms: u128,
+    virtual_desktop: RectInfo,
+    selection: RectInfo,
+    monitors: &'a [MonitorInfo],
+}
+
+pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, String> {
+    let frame = capture_frame()?;
+    let virtual_desktop = frame.virtual_desktop;
+    let rgba_for_window = frame.rgba.clone();
+
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        platform::run_selector(virtual_desktop, rgba_for_window)
+    })
+    .await
+    .map_err(|error| format!("選取執行緒異常結束：{error}"))??;
+
+    let Some(local_selection) = selected else {
+        return Ok(None);
+    };
+    let global_selection = RectInfo {
+        x: virtual_desktop.x + local_selection.x,
+        y: virtual_desktop.y + local_selection.y,
+        width: local_selection.width,
+        height: local_selection.height,
+    };
+    let cropped = crop_rgba(
+        &frame.rgba,
+        virtual_desktop.width,
+        virtual_desktop.height,
+        local_selection,
+    )?;
+
+    let captured_at_unix_ms = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|error| format!("無法取得系統時間：{error}"))?
+        .as_millis();
+    let output_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("無法取得應用程式資料目錄：{error}"))?
+        .join("poc-b");
+    fs::create_dir_all(&output_dir).map_err(|error| format!("無法建立 PoC-B 輸出目錄：{error}"))?;
+
+    let image_path = output_dir.join(format!("selection-{captured_at_unix_ms}.png"));
+    let metadata_path = output_dir.join(format!("selection-{captured_at_unix_ms}.json"));
+    image::save_buffer_with_format(
+        &image_path,
+        &cropped,
+        local_selection.width as u32,
+        local_selection.height as u32,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    )
+    .map_err(|error| format!("無法儲存選取 PNG：{error}"))?;
+
+    let metadata = SelectionMetadata {
+        schema_version: 1,
+        captured_at_unix_ms,
+        virtual_desktop,
+        selection: global_selection,
+        monitors: &frame.monitors,
+    };
+    fs::write(
+        &metadata_path,
+        serde_json::to_vec_pretty(&metadata)
+            .map_err(|error| format!("無法建立選取 JSON：{error}"))?,
+    )
+    .map_err(|error| format!("無法儲存選取 JSON：{error}"))?;
+
+    Ok(Some(SelectionSnapshot {
+        image_path: path_string(image_path),
+        metadata_path: path_string(metadata_path),
+        selection: global_selection,
+        width: local_selection.width,
+        height: local_selection.height,
+    }))
+}
+
+fn crop_rgba(
+    source: &[u8],
+    source_width: i32,
+    source_height: i32,
+    rect: RectInfo,
+) -> Result<Vec<u8>, String> {
+    if rect.x < 0
+        || rect.y < 0
+        || rect.width <= 0
+        || rect.height <= 0
+        || rect.x + rect.width > source_width
+        || rect.y + rect.height > source_height
+    {
+        return Err("選取範圍超出 virtual desktop".into());
+    }
+    let expected = source_width as usize * source_height as usize * 4;
+    if source.len() != expected {
+        return Err("來源桌面像素長度不正確".into());
+    }
+
+    let row_bytes = rect.width as usize * 4;
+    let mut output = Vec::with_capacity(row_bytes * rect.height as usize);
+    for y in rect.y..rect.y + rect.height {
+        let start = (y as usize * source_width as usize + rect.x as usize) * 4;
+        output.extend_from_slice(&source[start..start + row_bytes]);
+    }
+    Ok(output)
+}
+
+fn path_string(path: PathBuf) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+#[cfg(windows)]
+mod platform {
+    use crate::capture::RectInfo;
+    use std::{mem::size_of, sync::mpsc};
+    use windows::{
+        core::w,
+        Win32::{
+            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+            Graphics::Gdi::{
+                BeginPaint, CreatePen, DeleteObject, EndPaint, GetStockObject, InvalidateRect,
+                Rectangle, SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW,
+                BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT,
+                PS_SOLID, SRCCOPY, TRANSPARENT,
+            },
+            System::LibraryLoader::GetModuleHandleW,
+            UI::{
+                HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
+                Input::KeyboardAndMouse::{
+                    ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN,
+                },
+                WindowsAndMessaging::{
+                    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+                    LoadCursorW, PostQuitMessage, RegisterClassW, SetForegroundWindow, ShowWindow,
+                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, IDC_CROSS, MSG, SW_SHOW,
+                    WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                    WM_MOUSEMOVE, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                },
+            },
+        },
+    };
+
+    static STATE: std::sync::Mutex<Option<SelectorState>> = std::sync::Mutex::new(None);
+
+    struct SelectorState {
+        width: i32,
+        height: i32,
+        bgra: Vec<u8>,
+        drag_start: Option<(i32, i32)>,
+        selection: Option<RectInfo>,
+        sender: Option<mpsc::Sender<Option<RectInfo>>>,
+    }
+
+    pub fn run_selector(
+        virtual_desktop: RectInfo,
+        mut rgba: Vec<u8>,
+    ) -> Result<Option<RectInfo>, String> {
+        for pixel in rgba.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        let (sender, receiver) = mpsc::channel();
+        *STATE.lock().map_err(|_| "選取狀態鎖定失敗")? = Some(SelectorState {
+            width: virtual_desktop.width,
+            height: virtual_desktop.height,
+            bgra: rgba,
+            drag_start: None,
+            selection: None,
+            sender: Some(sender),
+        });
+
+        let result = unsafe { run_window(virtual_desktop) };
+        if let Err(error) = result {
+            *STATE.lock().map_err(|_| "選取狀態清理失敗")? = None;
+            return Err(error);
+        }
+        let selection = receiver
+            .recv()
+            .map_err(|error| format!("無法接收選取結果：{error}"))?;
+        *STATE.lock().map_err(|_| "選取狀態清理失敗")? = None;
+        Ok(selection)
+    }
+
+    unsafe fn run_window(rect: RectInfo) -> Result<(), String> {
+        SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let module =
+            GetModuleHandleW(None).map_err(|error| format!("GetModuleHandleW：{error}"))?;
+        let instance = HINSTANCE(module.0);
+        let class_name = w!("CaptureFlowSelectorWindow");
+        let cursor =
+            LoadCursorW(None, IDC_CROSS).map_err(|error| format!("無法載入十字游標：{error}"))?;
+        let window_class = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(window_proc),
+            hInstance: instance,
+            hCursor: cursor,
+            lpszClassName: class_name,
+            ..Default::default()
+        };
+        if RegisterClassW(&window_class) == 0 {
+            // The class can already exist after a previous selection in this process.
+        }
+
+        let hwnd = CreateWindowExW(
+            WINDOW_EX_STYLE(WS_EX_TOPMOST.0 | WS_EX_TOOLWINDOW.0),
+            class_name,
+            w!("CaptureFlow Area Selector"),
+            WS_POPUP,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            None,
+            None,
+            Some(instance),
+            None,
+        )
+        .map_err(|error| format!("無法建立選取覆蓋層：{error}"))?;
+        ShowWindow(hwnd, SW_SHOW);
+        SetForegroundWindow(hwnd);
+        let _ = SetFocus(Some(hwnd));
+
+        let mut message = MSG::default();
+        loop {
+            let status = GetMessageW(&mut message, None, 0, 0);
+            if status.0 <= 0 {
+                break;
+            }
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        Ok(())
+    }
+
+    unsafe extern "system" fn window_proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match message {
+            WM_LBUTTONDOWN => {
+                let point = mouse_point(lparam);
+                if let Ok(mut guard) = STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        let point = clamp_point(point, state.width, state.height);
+                        state.drag_start = Some(point);
+                        state.selection = Some(RectInfo {
+                            x: point.0,
+                            y: point.1,
+                            width: 0,
+                            height: 0,
+                        });
+                    }
+                }
+                SetCapture(hwnd);
+                InvalidateRect(Some(hwnd), None, false);
+                LRESULT(0)
+            }
+            WM_MOUSEMOVE => {
+                if let Ok(mut guard) = STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        if let Some(start) = state.drag_start {
+                            let current =
+                                clamp_point(mouse_point(lparam), state.width, state.height);
+                            state.selection = Some(normalize_rect(start, current));
+                            InvalidateRect(Some(hwnd), None, false);
+                        }
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_LBUTTONUP => {
+                if let Ok(mut guard) = STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        if let Some(start) = state.drag_start.take() {
+                            let current =
+                                clamp_point(mouse_point(lparam), state.width, state.height);
+                            state.selection = Some(normalize_rect(start, current));
+                        }
+                    }
+                }
+                let _ = ReleaseCapture();
+                InvalidateRect(Some(hwnd), None, false);
+                LRESULT(0)
+            }
+            WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
+                finish(None);
+                let _ = DestroyWindow(hwnd);
+                LRESULT(0)
+            }
+            WM_KEYDOWN if wparam.0 as u16 == VK_RETURN.0 => {
+                let selection = STATE.lock().ok().and_then(|guard| {
+                    guard.as_ref().and_then(|state| {
+                        state
+                            .selection
+                            .filter(|rect| rect.width >= 2 && rect.height >= 2)
+                    })
+                });
+                if selection.is_some() {
+                    finish(selection);
+                    let _ = DestroyWindow(hwnd);
+                }
+                LRESULT(0)
+            }
+            WM_PAINT => {
+                paint(hwnd);
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                finish(None);
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, message, wparam, lparam),
+        }
+    }
+
+    unsafe fn paint(hwnd: HWND) {
+        let mut paint = PAINTSTRUCT::default();
+        let dc = BeginPaint(hwnd, &mut paint);
+        if let Ok(guard) = STATE.lock() {
+            if let Some(state) = guard.as_ref() {
+                let info = BITMAPINFO {
+                    bmiHeader: BITMAPINFOHEADER {
+                        biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: state.width,
+                        biHeight: -state.height,
+                        biPlanes: 1,
+                        biBitCount: 32,
+                        biCompression: BI_RGB.0,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                StretchDIBits(
+                    dc,
+                    0,
+                    0,
+                    state.width,
+                    state.height,
+                    0,
+                    0,
+                    state.width,
+                    state.height,
+                    Some(state.bgra.as_ptr().cast()),
+                    &info,
+                    DIB_RGB_COLORS,
+                    SRCCOPY,
+                );
+
+                SetBkMode(dc, TRANSPARENT);
+                SetTextColor(dc, COLORREF(0x00F0_FFFF));
+                let instructions: Vec<u16> = "拖曳選取範圍 · Enter 確認 · Esc 取消"
+                    .encode_utf16()
+                    .collect();
+                TextOutW(dc, 24, 24, &instructions);
+
+                if let Some(rect) = state.selection {
+                    if rect.width > 0 && rect.height > 0 {
+                        let pen = CreatePen(PS_SOLID, 3, COLORREF(0x0074_E7AD));
+                        let old_pen = SelectObject(dc, pen.into());
+                        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                        Rectangle(
+                            dc,
+                            rect.x,
+                            rect.y,
+                            rect.x + rect.width,
+                            rect.y + rect.height,
+                        );
+                        SelectObject(dc, old_brush);
+                        SelectObject(dc, old_pen);
+                        DeleteObject(pen.into());
+                    }
+                }
+            }
+        }
+        EndPaint(hwnd, &paint);
+    }
+
+    fn finish(result: Option<RectInfo>) {
+        if let Ok(mut guard) = STATE.lock() {
+            if let Some(state) = guard.as_mut() {
+                if let Some(sender) = state.sender.take() {
+                    let _ = sender.send(result);
+                }
+            }
+        }
+    }
+
+    fn mouse_point(lparam: LPARAM) -> (i32, i32) {
+        let x = (lparam.0 as u16 as i16) as i32;
+        let y = ((lparam.0 >> 16) as u16 as i16) as i32;
+        (x, y)
+    }
+
+    fn clamp_point(point: (i32, i32), width: i32, height: i32) -> (i32, i32) {
+        (point.0.clamp(0, width), point.1.clamp(0, height))
+    }
+
+    fn normalize_rect(start: (i32, i32), end: (i32, i32)) -> RectInfo {
+        let left = start.0.min(end.0);
+        let top = start.1.min(end.1);
+        RectInfo {
+            x: left,
+            y: top,
+            width: start.0.max(end.0) - left,
+            height: start.1.max(end.1) - top,
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod platform {
+    use crate::capture::RectInfo;
+
+    pub fn run_selector(
+        _virtual_desktop: RectInfo,
+        _rgba: Vec<u8>,
+    ) -> Result<Option<RectInfo>, String> {
+        Err("PoC-B 目前只支援 Windows".into())
+    }
+}

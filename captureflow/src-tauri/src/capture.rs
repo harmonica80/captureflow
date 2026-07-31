@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::{fs, path::PathBuf, time::SystemTime};
 use tauri::{AppHandle, Manager};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RectInfo {
     pub x: i32,
@@ -33,6 +33,12 @@ pub struct DesktopSnapshot {
     pub monitors: Vec<MonitorInfo>,
 }
 
+pub(crate) struct DesktopFrame {
+    pub virtual_desktop: RectInfo,
+    pub monitors: Vec<MonitorInfo>,
+    pub rgba: Vec<u8>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SnapshotMetadata<'a> {
@@ -58,10 +64,12 @@ pub fn capture_virtual_desktop(app: &AppHandle) -> Result<DesktopSnapshot, Strin
     let image_path = output_dir.join(format!("virtual-desktop-{captured_at_unix_ms}.png"));
     let metadata_path = output_dir.join(format!("virtual-desktop-{captured_at_unix_ms}.json"));
 
-    let (virtual_desktop, monitors, rgba) = platform::capture()?;
+    let frame = capture_frame()?;
+    let virtual_desktop = frame.virtual_desktop;
+    let monitors = frame.monitors;
     image::save_buffer_with_format(
         &image_path,
-        &rgba,
+        &frame.rgba,
         virtual_desktop.width as u32,
         virtual_desktop.height as u32,
         image::ColorType::Rgba8,
@@ -85,6 +93,15 @@ pub fn capture_virtual_desktop(app: &AppHandle) -> Result<DesktopSnapshot, Strin
         captured_at_unix_ms,
         virtual_desktop,
         monitors,
+    })
+}
+
+pub(crate) fn capture_frame() -> Result<DesktopFrame, String> {
+    let (virtual_desktop, monitors, rgba) = platform::capture()?;
+    Ok(DesktopFrame {
+        virtual_desktop,
+        monitors,
+        rgba,
     })
 }
 

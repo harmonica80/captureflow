@@ -17,11 +17,20 @@ type DesktopSnapshot = {
   virtualDesktop: RectInfo;
   monitors: MonitorInfo[];
 };
+type SelectionSnapshot = {
+  imagePath: string;
+  metadataPath: string;
+  selection: RectInfo;
+  width: number;
+  height: number;
+};
 
 function App() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<DesktopSnapshot | null>(null);
   const [error, setError] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
 
   async function runPoc() {
     setRunning(true);
@@ -35,6 +44,19 @@ function App() {
     }
   }
 
+  async function runSelector() {
+    setSelecting(true);
+    setError("");
+    try {
+      const selected = await invoke<SelectionSnapshot | null>("select_screen_area");
+      if (selected) setSelection(selected);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setSelecting(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -43,11 +65,30 @@ function App() {
         <p>
           Windows 本機優先的螢幕截取、物件式標註、置頂貼圖與視覺工作流工具。
         </p>
-        <div className="status"><i />PoC-A：virtual desktop 快照</div>
-        <button className="capture-button" onClick={runPoc} disabled={running}>
-          {running ? "正在擷取…" : "執行桌面快照測試"}
-        </button>
+        <div className="status"><i />PoC-B：原生跨螢幕選取層</div>
+        <div className="action-row">
+          <button className="capture-button primary" onClick={runSelector} disabled={selecting}>
+            {selecting ? "選取模式執行中…" : "開始框選螢幕範圍"}
+          </button>
+          <button className="capture-button" onClick={runPoc} disabled={running}>
+            {running ? "正在擷取…" : "執行完整桌面快照"}
+          </button>
+        </div>
       </section>
+
+      {selection && (
+        <section className="result-panel selection-result" aria-live="polite">
+          <div className="result-heading">
+            <div><span>SELECTION COMPLETE</span><h2>選取圖片已輸出</h2></div>
+            <strong>{selection.width} × {selection.height}</strong>
+          </div>
+          <p className="selection-coordinates">
+            全域座標 {selection.selection.x}, {selection.selection.y} · {selection.width} × {selection.height}
+          </p>
+          <p className="path"><b>PNG</b>{selection.imagePath}</p>
+          <p className="path"><b>JSON</b>{selection.metadataPath}</p>
+        </section>
+      )}
 
       {(result || error) && (
         <section className={`result-panel ${error ? "error" : ""}`} aria-live="polite">
