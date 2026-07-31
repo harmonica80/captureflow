@@ -136,7 +136,7 @@ mod platform {
     use windows::{
         core::w,
         Win32::{
-            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
             Graphics::Gdi::{
                 BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject,
                 IntersectClipRect, InvalidateRect, Rectangle, RestoreDC, SaveDC, SelectObject,
@@ -152,10 +152,12 @@ mod platform {
                 },
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-                    LoadCursorW, PostQuitMessage, RegisterClassW, SetForegroundWindow, ShowWindow,
-                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, IDC_CROSS, MSG, SW_SHOW,
-                    WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-                    WM_MOUSEMOVE, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    GetWindow, GetWindowRect, IsIconic, IsWindowVisible, LoadCursorW,
+                    PostQuitMessage, RegisterClassW, SetForegroundWindow, ShowWindow,
+                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_HWNDFIRST, GW_HWNDNEXT, IDC_CROSS,
+                    MSG, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN,
+                    WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW,
+                    WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -164,12 +166,15 @@ mod platform {
     static STATE: std::sync::Mutex<Option<SelectorState>> = std::sync::Mutex::new(None);
 
     struct SelectorState {
+        origin_x: i32,
+        origin_y: i32,
         width: i32,
         height: i32,
         bgra: Vec<u8>,
         dimmed_bgra: Vec<u8>,
         interaction: Option<Interaction>,
         selection: Option<RectInfo>,
+        hover_candidate: Option<RectInfo>,
         sender: Option<mpsc::Sender<Option<RectInfo>>>,
     }
 
@@ -177,6 +182,10 @@ mod platform {
     enum Interaction {
         Create {
             start: (i32, i32),
+        },
+        PendingWindow {
+            start: (i32, i32),
+            candidate: RectInfo,
         },
         Resize {
             handle: Handle,
@@ -212,12 +221,15 @@ mod platform {
         }
         let (sender, receiver) = mpsc::channel();
         *STATE.lock().map_err(|_| "選取狀態鎖定失敗")? = Some(SelectorState {
+            origin_x: virtual_desktop.x,
+            origin_y: virtual_desktop.y,
             width: virtual_desktop.width,
             height: virtual_desktop.height,
             bgra: rgba,
             dimmed_bgra,
             interaction: None,
             selection: None,
+            hover_candidate: None,
             sender: Some(sender),
         });
 
@@ -305,14 +317,19 @@ mod platform {
                                 start: point,
                                 original,
                             });
+                        } else if state.selection.is_none() {
+                            if let Some(candidate) = state.hover_candidate {
+                                state.interaction = Some(Interaction::PendingWindow {
+                                    start: point,
+                                    candidate,
+                                });
+                            } else {
+                                state.interaction = Some(Interaction::Create { start: point });
+                                state.selection = Some(empty_rect(point));
+                            }
                         } else {
                             state.interaction = Some(Interaction::Create { start: point });
-                            state.selection = Some(RectInfo {
-                                x: point.0,
-                                y: point.1,
-                                width: 0,
-                                height: 0,
-                            });
+                            state.selection = Some(empty_rect(point));
                         }
                     }
                 }
@@ -326,14 +343,27 @@ mod platform {
                         if let Some(interaction) = state.interaction {
                             let current =
                                 clamp_point(mouse_point(lparam), state.width, state.height);
-                            state.selection = Some(update_selection(
-                                interaction,
-                                current,
-                                state.width,
-                                state.height,
-                            ));
-                            InvalidateRect(Some(hwnd), None, false);
+                            if let Interaction::PendingWindow { start, .. } = interaction {
+                                if (current.0 - start.0).abs() >= 4
+                                    || (current.1 - start.1).abs() >= 4
+                                {
+                                    state.interaction = Some(Interaction::Create { start });
+                                    state.hover_candidate = None;
+                                    state.selection = Some(normalize_rect(start, current));
+                                }
+                            } else {
+                                state.selection = Some(update_selection(
+                                    interaction,
+                                    current,
+                                    state.width,
+                                    state.height,
+                                ));
+                            }
+                        } else if state.selection.is_none() {
+                            let point = clamp_point(mouse_point(lparam), state.width, state.height);
+                            state.hover_candidate = detect_window_at(hwnd, point, state);
                         }
+                        InvalidateRect(Some(hwnd), None, false);
                     }
                 }
                 LRESULT(0)
@@ -350,6 +380,7 @@ mod platform {
                                 state.width,
                                 state.height,
                             ));
+                            state.hover_candidate = None;
                         }
                     }
                 }
@@ -458,12 +489,12 @@ mod platform {
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, COLORREF(0x00F0_FFFF));
                 let instructions: Vec<u16> =
-                    "拖曳選取 · 方向鍵微調 · Shift + 方向鍵 10 px · Enter 確認 · Esc 取消"
+                    "移動游標偵測視窗 · 單擊選取 · 拖曳自由框選 · 方向鍵微調 · Enter 確認"
                         .encode_utf16()
                         .collect();
                 TextOutW(dc, 24, 24, &instructions);
 
-                if let Some(rect) = state.selection {
+                if let Some(rect) = state.selection.or(state.hover_candidate) {
                     if rect.width > 0 && rect.height > 0 {
                         // Keep the frozen desktop at a fixed 1:1 coordinate mapping. Only the
                         // clipping rectangle changes while creating or resizing the selection.
@@ -507,15 +538,17 @@ mod platform {
                         SelectObject(dc, old_pen);
                         DeleteObject(pen.into());
 
-                        let handle_brush = CreateSolidBrush(COLORREF(0x0074_E7AD));
-                        let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
-                        let old_brush = SelectObject(dc, handle_brush.into());
-                        for (x, y) in handle_points(rect) {
-                            Rectangle(dc, x - 5, y - 5, x + 6, y + 6);
+                        if state.selection.is_some() {
+                            let handle_brush = CreateSolidBrush(COLORREF(0x0074_E7AD));
+                            let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                            let old_brush = SelectObject(dc, handle_brush.into());
+                            for (x, y) in handle_points(rect) {
+                                Rectangle(dc, x - 5, y - 5, x + 6, y + 6);
+                            }
+                            SelectObject(dc, old_brush);
+                            SelectObject(dc, old_pen);
+                            DeleteObject(handle_brush.into());
                         }
-                        SelectObject(dc, old_brush);
-                        SelectObject(dc, old_pen);
-                        DeleteObject(handle_brush.into());
 
                         let dimensions = format!("{} × {}", rect.width, rect.height);
                         let dimensions: Vec<u16> = dimensions.encode_utf16().collect();
@@ -610,6 +643,7 @@ mod platform {
     ) -> RectInfo {
         match interaction {
             Interaction::Create { start } => normalize_rect(start, current),
+            Interaction::PendingWindow { candidate, .. } => candidate,
             Interaction::Resize {
                 handle,
                 start,
@@ -665,6 +699,60 @@ mod platform {
             y: (rect.y + dy).clamp(0, height - rect.height),
             ..rect
         }
+    }
+
+    fn empty_rect(point: (i32, i32)) -> RectInfo {
+        RectInfo {
+            x: point.0,
+            y: point.1,
+            width: 0,
+            height: 0,
+        }
+    }
+
+    unsafe fn detect_window_at(
+        selector_hwnd: HWND,
+        local_point: (i32, i32),
+        state: &SelectorState,
+    ) -> Option<RectInfo> {
+        let screen_x = state.origin_x + local_point.0;
+        let screen_y = state.origin_y + local_point.1;
+        let mut current = GetWindow(selector_hwnd, GW_HWNDFIRST).ok()?;
+
+        while !current.is_invalid() {
+            if current != selector_hwnd
+                && IsWindowVisible(current).as_bool()
+                && !IsIconic(current).as_bool()
+            {
+                let mut rect = RECT::default();
+                if GetWindowRect(current, &mut rect).is_ok()
+                    && rect.right > rect.left
+                    && rect.bottom > rect.top
+                    && screen_x >= rect.left
+                    && screen_x < rect.right
+                    && screen_y >= rect.top
+                    && screen_y < rect.bottom
+                {
+                    let left = (rect.left - state.origin_x).clamp(0, state.width);
+                    let top = (rect.top - state.origin_y).clamp(0, state.height);
+                    let right = (rect.right - state.origin_x).clamp(0, state.width);
+                    let bottom = (rect.bottom - state.origin_y).clamp(0, state.height);
+                    if right - left >= 2 && bottom - top >= 2 {
+                        return Some(RectInfo {
+                            x: left,
+                            y: top,
+                            width: right - left,
+                            height: bottom - top,
+                        });
+                    }
+                }
+            }
+            current = match GetWindow(current, GW_HWNDNEXT) {
+                Ok(next) => next,
+                Err(_) => break,
+            };
+        }
+        None
     }
 }
 
