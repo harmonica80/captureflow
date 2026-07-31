@@ -97,18 +97,18 @@ mod platform {
     use super::{MonitorInfo, RectInfo};
     use std::mem::size_of;
     use windows::Win32::{
-        Foundation::{BOOL, LPARAM, RECT},
+        Foundation::{LPARAM, RECT},
         Graphics::Gdi::{
             BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
             EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, ReleaseDC, SelectObject,
             BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC, HMONITOR, MONITORINFO,
-            MONITORINFOEXW, MONITORINFOF_PRIMARY, SRCCOPY,
+            MONITORINFOEXW, SRCCOPY,
         },
         UI::{
             HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
             WindowsAndMessaging::{
-                GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-                SM_YVIRTUALSCREEN,
+                GetSystemMetrics, MONITORINFOF_PRIMARY, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
             },
         },
     };
@@ -139,7 +139,7 @@ mod platform {
             Some(enum_monitor_callback),
             LPARAM((&mut monitors as *mut Vec<MonitorInfo>) as isize),
         );
-        if !result.as_bool() {
+        if result == 0 {
             return Err("EnumDisplayMonitors 無法列舉顯示器".into());
         }
         if monitors.is_empty() {
@@ -153,18 +153,18 @@ mod platform {
         _monitor_dc: HDC,
         _monitor_rect: *mut RECT,
         data: LPARAM,
-    ) -> BOOL {
+    ) -> windows::core::BOOL {
         let monitors = &mut *(data.0 as *mut Vec<MonitorInfo>);
         if let Some(info) = read_monitor(monitor) {
             monitors.push(info);
         }
-        BOOL(1)
+        1
     }
 
     unsafe fn read_monitor(monitor: HMONITOR) -> Option<MonitorInfo> {
         let mut info = MONITORINFOEXW::default();
         info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
-        if !GetMonitorInfoW(monitor, &mut info as *mut _ as *mut MONITORINFO).as_bool() {
+        if GetMonitorInfoW(monitor, &mut info as *mut _ as *mut MONITORINFO) == 0 {
             return None;
         }
 
@@ -226,7 +226,7 @@ mod platform {
             rect.y,
             SRCCOPY,
         )
-        .as_bool();
+        .is_ok();
 
         let result = if copied {
             read_bitmap_rgba(memory_dc, bitmap, rect.width, rect.height)
