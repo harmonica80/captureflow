@@ -138,10 +138,10 @@ mod platform {
         Win32::{
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
             Graphics::Gdi::{
-                BeginPaint, CreatePen, DeleteObject, EndPaint, GetStockObject, InvalidateRect,
-                Rectangle, SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW,
-                BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT,
-                PS_SOLID, SRCCOPY, TRANSPARENT,
+                BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject,
+                InvalidateRect, Rectangle, SelectObject, SetBkMode, SetTextColor, StretchDIBits,
+                TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH,
+                PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -166,9 +166,34 @@ mod platform {
         width: i32,
         height: i32,
         bgra: Vec<u8>,
-        drag_start: Option<(i32, i32)>,
+        dimmed_bgra: Vec<u8>,
+        interaction: Option<Interaction>,
         selection: Option<RectInfo>,
         sender: Option<mpsc::Sender<Option<RectInfo>>>,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Interaction {
+        Create {
+            start: (i32, i32),
+        },
+        Resize {
+            handle: Handle,
+            start: (i32, i32),
+            original: RectInfo,
+        },
+    }
+
+    #[derive(Clone, Copy)]
+    enum Handle {
+        TopLeft,
+        Top,
+        TopRight,
+        Right,
+        BottomRight,
+        Bottom,
+        BottomLeft,
+        Left,
     }
 
     pub fn run_selector(
@@ -178,12 +203,19 @@ mod platform {
         for pixel in rgba.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
+        let mut dimmed_bgra = rgba.clone();
+        for pixel in dimmed_bgra.chunks_exact_mut(4) {
+            pixel[0] = (pixel[0] as u16 * 48 / 100) as u8;
+            pixel[1] = (pixel[1] as u16 * 48 / 100) as u8;
+            pixel[2] = (pixel[2] as u16 * 48 / 100) as u8;
+        }
         let (sender, receiver) = mpsc::channel();
         *STATE.lock().map_err(|_| "選取狀態鎖定失敗")? = Some(SelectorState {
             width: virtual_desktop.width,
             height: virtual_desktop.height,
             bgra: rgba,
-            drag_start: None,
+            dimmed_bgra,
+            interaction: None,
             selection: None,
             sender: Some(sender),
         });
@@ -263,13 +295,24 @@ mod platform {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
                         let point = clamp_point(point, state.width, state.height);
-                        state.drag_start = Some(point);
-                        state.selection = Some(RectInfo {
-                            x: point.0,
-                            y: point.1,
-                            width: 0,
-                            height: 0,
-                        });
+                        if let Some((handle, original)) = state
+                            .selection
+                            .and_then(|rect| hit_handle(point, rect).map(|handle| (handle, rect)))
+                        {
+                            state.interaction = Some(Interaction::Resize {
+                                handle,
+                                start: point,
+                                original,
+                            });
+                        } else {
+                            state.interaction = Some(Interaction::Create { start: point });
+                            state.selection = Some(RectInfo {
+                                x: point.0,
+                                y: point.1,
+                                width: 0,
+                                height: 0,
+                            });
+                        }
                     }
                 }
                 SetCapture(hwnd);
@@ -279,10 +322,15 @@ mod platform {
             WM_MOUSEMOVE => {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if let Some(start) = state.drag_start {
+                        if let Some(interaction) = state.interaction {
                             let current =
                                 clamp_point(mouse_point(lparam), state.width, state.height);
-                            state.selection = Some(normalize_rect(start, current));
+                            state.selection = Some(update_selection(
+                                interaction,
+                                current,
+                                state.width,
+                                state.height,
+                            ));
                             InvalidateRect(Some(hwnd), None, false);
                         }
                     }
@@ -292,10 +340,15 @@ mod platform {
             WM_LBUTTONUP => {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if let Some(start) = state.drag_start.take() {
+                        if let Some(interaction) = state.interaction.take() {
                             let current =
                                 clamp_point(mouse_point(lparam), state.width, state.height);
-                            state.selection = Some(normalize_rect(start, current));
+                            state.selection = Some(update_selection(
+                                interaction,
+                                current,
+                                state.width,
+                                state.height,
+                            ));
                         }
                     }
                 }
@@ -362,7 +415,7 @@ mod platform {
                     0,
                     state.width,
                     state.height,
-                    Some(state.bgra.as_ptr().cast()),
+                    Some(state.dimmed_bgra.as_ptr().cast()),
                     &info,
                     DIB_RGB_COLORS,
                     SRCCOPY,
@@ -377,6 +430,21 @@ mod platform {
 
                 if let Some(rect) = state.selection {
                     if rect.width > 0 && rect.height > 0 {
+                        StretchDIBits(
+                            dc,
+                            rect.x,
+                            rect.y,
+                            rect.width,
+                            rect.height,
+                            rect.x,
+                            rect.y,
+                            rect.width,
+                            rect.height,
+                            Some(state.bgra.as_ptr().cast()),
+                            &info,
+                            DIB_RGB_COLORS,
+                            SRCCOPY,
+                        );
                         let pen = CreatePen(PS_SOLID, 3, COLORREF(0x0074_E7AD));
                         let old_pen = SelectObject(dc, pen.into());
                         let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -390,6 +458,26 @@ mod platform {
                         SelectObject(dc, old_brush);
                         SelectObject(dc, old_pen);
                         DeleteObject(pen.into());
+
+                        let handle_brush = CreateSolidBrush(COLORREF(0x0074_E7AD));
+                        let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                        let old_brush = SelectObject(dc, handle_brush.into());
+                        for (x, y) in handle_points(rect) {
+                            Rectangle(dc, x - 5, y - 5, x + 6, y + 6);
+                        }
+                        SelectObject(dc, old_brush);
+                        SelectObject(dc, old_pen);
+                        DeleteObject(handle_brush.into());
+
+                        let dimensions = format!("{} × {}", rect.width, rect.height);
+                        let dimensions: Vec<u16> = dimensions.encode_utf16().collect();
+                        let label_y = if rect.y >= 34 {
+                            rect.y - 28
+                        } else {
+                            (rect.y + rect.height + 10).min(state.height - 22)
+                        };
+                        SetTextColor(dc, COLORREF(0x00F0_FFFF));
+                        TextOutW(dc, rect.x.max(8), label_y, &dimensions);
                     }
                 }
             }
@@ -425,6 +513,101 @@ mod platform {
             y: top,
             width: start.0.max(end.0) - left,
             height: start.1.max(end.1) - top,
+        }
+    }
+
+    fn handle_points(rect: RectInfo) -> [(i32, i32); 8] {
+        let right = rect.x + rect.width;
+        let bottom = rect.y + rect.height;
+        let middle_x = rect.x + rect.width / 2;
+        let middle_y = rect.y + rect.height / 2;
+        [
+            (rect.x, rect.y),
+            (middle_x, rect.y),
+            (right, rect.y),
+            (right, middle_y),
+            (right, bottom),
+            (middle_x, bottom),
+            (rect.x, bottom),
+            (rect.x, middle_y),
+        ]
+    }
+
+    fn hit_handle(point: (i32, i32), rect: RectInfo) -> Option<Handle> {
+        const HIT_RADIUS: i32 = 9;
+        let handles = [
+            Handle::TopLeft,
+            Handle::Top,
+            Handle::TopRight,
+            Handle::Right,
+            Handle::BottomRight,
+            Handle::Bottom,
+            Handle::BottomLeft,
+            Handle::Left,
+        ];
+        handle_points(rect)
+            .into_iter()
+            .zip(handles)
+            .find_map(|((x, y), handle)| {
+                ((point.0 - x).abs() <= HIT_RADIUS && (point.1 - y).abs() <= HIT_RADIUS)
+                    .then_some(handle)
+            })
+    }
+
+    fn update_selection(
+        interaction: Interaction,
+        current: (i32, i32),
+        width: i32,
+        height: i32,
+    ) -> RectInfo {
+        match interaction {
+            Interaction::Create { start } => normalize_rect(start, current),
+            Interaction::Resize {
+                handle,
+                start,
+                original,
+            } => resize_rect(original, handle, start, current, width, height),
+        }
+    }
+
+    fn resize_rect(
+        original: RectInfo,
+        handle: Handle,
+        start: (i32, i32),
+        current: (i32, i32),
+        width: i32,
+        height: i32,
+    ) -> RectInfo {
+        let dx = current.0 - start.0;
+        let dy = current.1 - start.1;
+        let mut left = original.x;
+        let mut top = original.y;
+        let mut right = original.x + original.width;
+        let mut bottom = original.y + original.height;
+
+        if matches!(handle, Handle::TopLeft | Handle::Left | Handle::BottomLeft) {
+            left = (original.x + dx).clamp(0, right - 2);
+        }
+        if matches!(
+            handle,
+            Handle::TopRight | Handle::Right | Handle::BottomRight
+        ) {
+            right = (original.x + original.width + dx).clamp(left + 2, width);
+        }
+        if matches!(handle, Handle::TopLeft | Handle::Top | Handle::TopRight) {
+            top = (original.y + dy).clamp(0, bottom - 2);
+        }
+        if matches!(
+            handle,
+            Handle::BottomLeft | Handle::Bottom | Handle::BottomRight
+        ) {
+            bottom = (original.y + original.height + dy).clamp(top + 2, height);
+        }
+        RectInfo {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
         }
     }
 }
