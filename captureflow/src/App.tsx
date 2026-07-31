@@ -31,6 +31,7 @@ function App() {
   const [error, setError] = useState("");
   const [selecting, setSelecting] = useState(false);
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
+  const [openingSticker, setOpeningSticker] = useState(false);
 
   async function runPoc() {
     setRunning(true);
@@ -57,15 +58,28 @@ function App() {
     }
   }
 
+  async function openSticker() {
+    if (!selection) return;
+    setOpeningSticker(true);
+    setError("");
+    try {
+      await invoke("open_sticker", { imagePath: selection.imagePath });
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setOpeningSticker(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
-        <span className="eyebrow">CAPTUREFLOW · PHASE 0</span>
+        <span className="eyebrow">CAPTUREFLOW · POC-C</span>
         <h1>讓每一次截圖，都能繼續工作。</h1>
         <p>
           Windows 本機優先的螢幕截取、物件式標註、置頂貼圖與視覺工作流工具。
         </p>
-        <div className="status"><i />PoC-B：原生跨螢幕選取層</div>
+        <div className="status"><i />PoC-C：原生置頂貼圖</div>
         <div className="action-row">
           <button className="capture-button primary" onClick={runSelector} disabled={selecting}>
             {selecting ? "選取模式執行中…" : "開始框選螢幕範圍"}
@@ -87,6 +101,12 @@ function App() {
           </p>
           <p className="path"><b>PNG</b>{selection.imagePath}</p>
           <p className="path"><b>JSON</b>{selection.metadataPath}</p>
+          <div className="sticker-actions">
+            <button className="capture-button primary" onClick={openSticker} disabled={openingSticker}>
+              {openingSticker ? "正在建立…" : "建立置頂貼圖"}
+            </button>
+            <span>拖曳移動 · 滾輪縮放 · Ctrl + 滾輪透明度 · 右鍵關閉</span>
+          </div>
         </section>
       )}
 

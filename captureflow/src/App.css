@@ -40,6 +40,8 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .path b { color: #d5e5dd; }
 .selection-result { border-color: #65c896; }
 .selection-coordinates { color: #b6c9bf; }
+.sticker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 20px; }
+.sticker-actions span { color: #91a39a; font-size: 13px; }
 
 .roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: clamp(54px, 9vw, 110px); }
 .roadmap article { min-height: 190px; padding: 24px; border: 1px solid #21352d; border-radius: 20px; background: rgba(13, 29, 24, .72); }
