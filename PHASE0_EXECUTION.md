@@ -65,7 +65,10 @@
 - 已實作凍結桌面、十字游標、正反方向拖曳與選框重繪。
 - 已實作 `Enter` 確認、`Esc` 取消與全域座標轉換。
 - 已實作裁切 PNG、schema v1 JSON 與繁中測試介面。
-- 待辦：GitHub Windows 編譯與 `POC_B_TESTING.md` 實機驗證。
+- GitHub Actions run `30621992095` 已通過完整 Windows release 編譯。
+- 已產出 PoC-B `CaptureFlow-portable.exe`（v0.1.0，4.21 MB）。
+- SHA-256：`C017981FA7AB26B447D62456FA85D9B0D6817D54D13AB36ED431D5660B72F2DB`。
+- 待辦：依 `POC_B_TESTING.md` 完成原生選取層實機驗證。
 
 ### PoC-C：置頂貼圖
 

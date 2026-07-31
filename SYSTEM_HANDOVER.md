@@ -27,9 +27,10 @@ npm.cmd run build:portable
 
 - 依使用者決定，不在本機安裝 Visual Studio Build Tools 2022。
 - `link.exe` 不在 PATH，因此所有 Rust/Tauri portable EXE 由 GitHub Actions `windows-latest` 建置。
-- 已確認成功建置 run：`30619404697`。
+- PoC-A 成功建置 run：`30619404697`。
+- PoC-B 成功建置 run：`30621992095`。
 - 本機交付檔：`captureflow/release/CaptureFlow-portable.exe`。
-- v0.1.0 SHA-256：`AF1D155B03299000C4E7A6D8D451B55D9F0686FA02D1B29EBBE464B12C69032F`。
+- 目前 PoC-B v0.1.0 SHA-256：`C017981FA7AB26B447D62456FA85D9B0D6817D54D13AB36ED431D5660B72F2DB`。
 
 ## 架構約束
 
@@ -41,4 +42,4 @@ npm.cmd run build:portable
 
 ## 下一個實作目標
 
-PoC-A 已在右側雙螢幕、125% + 100% 混合 DPI 配置通過。下一步由 GitHub Actions 編譯 PoC-B，下載 portable EXE 後依 `POC_B_TESTING.md` 完成原生跨螢幕選取測試。
+PoC-A 已在右側雙螢幕、125% + 100% 混合 DPI 配置通過。PoC-B 已通過 GitHub Windows 編譯並下載至 `captureflow/release`；下一步依 `POC_B_TESTING.md` 完成原生跨螢幕選取實測。
