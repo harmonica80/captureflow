@@ -154,10 +154,10 @@ mod platform {
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
                     GetWindow, GetWindowRect, IsIconic, IsWindowVisible, LoadCursorW,
                     PostQuitMessage, RegisterClassW, SetForegroundWindow, ShowWindow,
-                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_HWNDFIRST, GW_HWNDNEXT, IDC_CROSS,
-                    MSG, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN,
-                    WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW,
-                    WS_EX_TOPMOST, WS_POPUP,
+                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
+                    IDC_CROSS, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN,
+                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSW,
+                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -743,27 +743,10 @@ mod platform {
                 && IsWindowVisible(current).as_bool()
                 && !IsIconic(current).as_bool()
             {
-                let mut rect = RECT::default();
-                if GetWindowRect(current, &mut rect).is_ok()
-                    && rect.right > rect.left
-                    && rect.bottom > rect.top
-                    && screen_x >= rect.left
-                    && screen_x < rect.right
-                    && screen_y >= rect.top
-                    && screen_y < rect.bottom
-                {
-                    let left = (rect.left - state.origin_x).clamp(0, state.width);
-                    let top = (rect.top - state.origin_y).clamp(0, state.height);
-                    let right = (rect.right - state.origin_x).clamp(0, state.width);
-                    let bottom = (rect.bottom - state.origin_y).clamp(0, state.height);
-                    if right - left >= 2 && bottom - top >= 2 {
-                        return Some(RectInfo {
-                            x: left,
-                            y: top,
-                            width: right - left,
-                            height: bottom - top,
-                        });
-                    }
+                if window_contains_point(current, screen_x, screen_y) {
+                    let target =
+                        deepest_child_at(current, screen_x, screen_y, 0).unwrap_or(current);
+                    return clipped_window_rect(target, state);
                 }
             }
             current = match GetWindow(current, GW_HWNDNEXT) {
@@ -772,6 +755,57 @@ mod platform {
             };
         }
         None
+    }
+
+    unsafe fn deepest_child_at(
+        parent: HWND,
+        screen_x: i32,
+        screen_y: i32,
+        depth: u8,
+    ) -> Option<HWND> {
+        if depth >= 24 {
+            return None;
+        }
+        let mut child = GetWindow(parent, GW_CHILD).ok()?;
+        while !child.is_invalid() {
+            if IsWindowVisible(child).as_bool() && window_contains_point(child, screen_x, screen_y)
+            {
+                return Some(
+                    deepest_child_at(child, screen_x, screen_y, depth + 1).unwrap_or(child),
+                );
+            }
+            child = match GetWindow(child, GW_HWNDNEXT) {
+                Ok(next) => next,
+                Err(_) => break,
+            };
+        }
+        None
+    }
+
+    unsafe fn window_contains_point(hwnd: HWND, screen_x: i32, screen_y: i32) -> bool {
+        let mut rect = RECT::default();
+        GetWindowRect(hwnd, &mut rect).is_ok()
+            && rect.right > rect.left
+            && rect.bottom > rect.top
+            && screen_x >= rect.left
+            && screen_x < rect.right
+            && screen_y >= rect.top
+            && screen_y < rect.bottom
+    }
+
+    unsafe fn clipped_window_rect(hwnd: HWND, state: &SelectorState) -> Option<RectInfo> {
+        let mut rect = RECT::default();
+        GetWindowRect(hwnd, &mut rect).ok()?;
+        let left = (rect.left - state.origin_x).clamp(0, state.width);
+        let top = (rect.top - state.origin_y).clamp(0, state.height);
+        let right = (rect.right - state.origin_x).clamp(0, state.width);
+        let bottom = (rect.bottom - state.origin_y).clamp(0, state.height);
+        (right - left >= 2 && bottom - top >= 2).then_some(RectInfo {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        })
     }
 }
 
