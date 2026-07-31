@@ -2,7 +2,7 @@
 
 ## 專案狀態
 
-目前位於第 0 階段。PoC-A virtual desktop 快照已完成程式實作，等待 MSVC 工具鏈與 Windows 多螢幕實機驗證。Tauri 2 + React + TypeScript 專案位於 `captureflow/`。
+目前位於第 0 階段。PoC-A virtual desktop 快照已完成程式實作，並由 GitHub Actions 成功產生 portable EXE；下一步是 Windows 本機多螢幕實測。Tauri 2 + React + TypeScript 專案位於 `captureflow/`。
 
 ## 重要文件
 
@@ -24,9 +24,11 @@ npm.cmd run build:portable
 
 ## 本機已知阻礙
 
-- `link.exe` 目前不在 PATH，本機 Rust/Tauri 連結預期會失敗。
-- 安裝 Visual Studio Build Tools 2022 的「使用 C++ 的桌面開發」、MSVC v143 x64/x86 與 Windows SDK 後再重試。
-- 在問題排除前，正式 portable EXE 可由 GitHub Actions `windows-latest` 建置。
+- 依使用者決定，不在本機安裝 Visual Studio Build Tools 2022。
+- `link.exe` 不在 PATH，因此所有 Rust/Tauri portable EXE 由 GitHub Actions `windows-latest` 建置。
+- 已確認成功建置 run：`30619404697`。
+- 本機交付檔：`captureflow/release/CaptureFlow-portable.exe`。
+- v0.1.0 SHA-256：`AF1D155B03299000C4E7A6D8D451B55D9F0686FA02D1B29EBBE464B12C69032F`。
 
 ## 架構約束
 
@@ -38,4 +40,4 @@ npm.cmd run build:portable
 
 ## 下一個實作目標
 
-先安裝或提供 Visual Studio Build Tools 2022 的 C++ 工具鏈，完成 PoC-A Rust 型別編譯與實機驗證；通過後進入 PoC-B 透明選取覆蓋層。
+執行 `captureflow/release/CaptureFlow-portable.exe`，依 `POC_A_TESTING.md` 完成 PoC-A 實機驗證；通過後進入 PoC-B 透明選取覆蓋層。

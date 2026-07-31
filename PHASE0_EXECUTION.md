@@ -1,6 +1,6 @@
 # CaptureFlow 第 0 階段執行基線
 
-> 狀態：PoC-A 已實作，等待 Windows 本機建置與實機驗證  
+> 狀態：PoC-A 已通過 GitHub Windows 編譯，等待本機實際執行與多螢幕驗證  
 > 建立日期：2026-07-31  
 > 階段目標：用最小可執行原型消除 Windows 擷取核心的高風險假設。
 
@@ -46,7 +46,10 @@
 - 已實作 GDI `BitBlt` virtual desktop 擷取與 BGRA → RGBA PNG 輸出。
 - 已實作 schema v1 JSON 中繼資料與 Tauri command。
 - 已建立繁中測試介面及 `POC_A_TESTING.md` 測試矩陣。
-- 待辦：安裝 MSVC `link.exe` 後完成 Rust 編譯及多螢幕實機測試。
+- GitHub Actions run `30619404697` 已通過完整 Rust/Tauri release 編譯。
+- 已產出 `CaptureFlow-portable.exe`（v0.1.0，4.17 MB）。
+- SHA-256：`AF1D155B03299000C4E7A6D8D451B55D9F0686FA02D1B29EBBE464B12C69032F`。
+- 待辦：在本機執行 portable EXE，完成 `POC_A_TESTING.md` 多螢幕實機測試。
 
 ### PoC-B：透明選取覆蓋層
 
