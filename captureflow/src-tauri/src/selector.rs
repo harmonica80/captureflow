@@ -661,11 +661,17 @@ mod platform {
         let source_x =
             (cursor.0 - SAMPLE_COLUMNS / 2).clamp(0, (state.width - SAMPLE_COLUMNS).max(0));
         let source_y = (cursor.1 - SAMPLE_ROWS / 2).clamp(0, (state.height - SAMPLE_ROWS).max(0));
+        let mut sample_bgra = Vec::with_capacity((SAMPLE_COLUMNS * SAMPLE_ROWS * 4) as usize);
+        for row in source_y..source_y + SAMPLE_ROWS {
+            let start = ((row * state.width + source_x) * 4) as usize;
+            let end = start + (SAMPLE_COLUMNS * 4) as usize;
+            sample_bgra.extend_from_slice(&state.bgra[start..end]);
+        }
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: state.width,
-                biHeight: -state.height,
+                biWidth: SAMPLE_COLUMNS,
+                biHeight: -SAMPLE_ROWS,
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB.0,
@@ -679,11 +685,11 @@ mod platform {
             panel_y + PADDING,
             SAMPLE_COLUMNS * PIXEL_SIZE,
             SAMPLE_ROWS * PIXEL_SIZE,
-            source_x,
-            source_y,
+            0,
+            0,
             SAMPLE_COLUMNS,
             SAMPLE_ROWS,
-            Some(state.bgra.as_ptr().cast()),
+            Some(sample_bgra.as_ptr().cast()),
             &info,
             DIB_RGB_COLORS,
             SRCCOPY,
