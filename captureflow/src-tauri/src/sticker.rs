@@ -25,20 +25,18 @@ mod platform {
     use std::{cell::RefCell, mem::size_of};
     use windows::{
         core::w,
-        Foundation::Numerics::Vector2,
         Win32::{
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
             Graphics::{
                 Direct2D::{
                     Common::{D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT},
-                    D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget,
-                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_ELLIPSE,
-                    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+                    D2D1CreateFactory, ID2D1Factory, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
                     D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
                     D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
                 },
                 Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
-                Graphics::Gdi::{
+                Gdi::{
                     BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
                     GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, SelectObject,
                     SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
@@ -64,6 +62,7 @@ mod platform {
             },
         },
     };
+    use windows_numerics::Vector2;
 
     thread_local! {
         static STATE: RefCell<Option<StickerState>> = const { RefCell::new(None) };
