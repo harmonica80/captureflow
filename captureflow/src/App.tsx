@@ -1,6 +1,7 @@
 import "./App.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Image } from "@tauri-apps/api/image";
 import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
@@ -124,7 +125,12 @@ function App() {
     setError("");
     setOutputStatus("");
     try {
-      await writeImage(selection.imagePath);
+      const clipboardImage = await Image.fromPath(selection.imagePath);
+      try {
+        await writeImage(clipboardImage);
+      } finally {
+        await clipboardImage.close();
+      }
       setOutputStatus("已複製圖片到剪貼簿");
     } catch (reason) {
       setError(String(reason));
