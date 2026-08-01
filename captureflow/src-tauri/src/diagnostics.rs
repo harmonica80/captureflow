@@ -21,6 +21,14 @@ pub struct CapabilityReport {
     gif_encoder: &'static str,
 }
 
+fn is_traditional_chinese_tag(language_tag: &str) -> bool {
+    let tag = language_tag.to_ascii_lowercase();
+    tag == "zh-hant"
+        || tag.starts_with("zh-hant-")
+        || tag.starts_with("zh-tw")
+        || tag.starts_with("zh-hk")
+}
+
 #[cfg(windows)]
 pub fn run() -> Result<CapabilityReport, String> {
     use windows::{
@@ -53,10 +61,9 @@ pub fn run() -> Result<CapabilityReport, String> {
                 .to_string(),
         });
     }
-    let traditional_chinese_ocr = ocr_languages.iter().any(|language| {
-        let tag = language.language_tag.to_ascii_lowercase();
-        tag == "zh-hant" || tag.starts_with("zh-tw") || tag.starts_with("zh-hk")
-    });
+    let traditional_chinese_ocr = ocr_languages
+        .iter()
+        .any(|language| is_traditional_chinese_tag(&language.language_tag));
     let english_ocr = ocr_languages
         .iter()
         .any(|language| language.language_tag.to_ascii_lowercase().starts_with("en"));
@@ -78,4 +85,18 @@ pub fn run() -> Result<CapabilityReport, String> {
 #[cfg(not(windows))]
 pub fn run() -> Result<CapabilityReport, String> {
     Err("Capability diagnostics are available on Windows only.".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_traditional_chinese_tag;
+
+    #[test]
+    fn recognizes_windows_traditional_chinese_language_tags() {
+        for tag in ["zh-Hant", "zh-Hant-TW", "zh-TW", "zh-HK"] {
+            assert!(is_traditional_chinese_tag(tag), "expected {tag} to match");
+        }
+        assert!(!is_traditional_chinese_tag("zh-Hans-CN"));
+        assert!(!is_traditional_chinese_tag("en-US"));
+    }
 }

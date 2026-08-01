@@ -26,6 +26,7 @@ PoC-D 主畫面新增「檢查錄影與 OCR 能力」，即時回報：
 - Windows Graphics Capture 是否支援。
 - Windows OCR 是否可用。
 - 繁體中文與英文 OCR 語言包是否安裝。
+- 繁體中文語言標籤需接受 `zh-Hant`、`zh-Hant-*`、`zh-TW*` 與 `zh-HK*` 格式。
 - OCR 引擎支援的最大圖片邊長與所有可用語言。
 
 ## 尚待後續實測
