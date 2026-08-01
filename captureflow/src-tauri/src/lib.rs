@@ -12,6 +12,11 @@ fn capture_virtual_desktop(app: tauri::AppHandle) -> Result<capture::DesktopSnap
 }
 
 #[tauri::command]
+fn list_monitors() -> Result<Vec<capture::MonitorInfo>, String> {
+    capture::list_monitors()
+}
+
+#[tauri::command]
 async fn select_screen_area(
     app: tauri::AppHandle,
 ) -> Result<Option<selector::SelectionSnapshot>, String> {
@@ -25,6 +30,16 @@ async fn repeat_last_selection(
     tauri::async_runtime::spawn_blocking(move || selector::repeat_last_area(app))
         .await
         .map_err(|error| format!("重複擷取執行緒異常結束：{error}"))?
+}
+
+#[tauri::command]
+async fn capture_monitor(
+    app: tauri::AppHandle,
+    device_name: String,
+) -> Result<selector::SelectionSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || selector::capture_monitor(app, &device_name))
+        .await
+        .map_err(|error| format!("指定螢幕擷取執行緒異常結束：{error}"))?
 }
 
 #[tauri::command]
@@ -142,8 +157,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             capture_virtual_desktop,
+            list_monitors,
             select_screen_area,
             repeat_last_selection,
+            capture_monitor,
             open_sticker,
             export_selection,
             run_capability_diagnostics

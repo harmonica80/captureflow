@@ -61,6 +61,25 @@ pub fn repeat_last_area(app: AppHandle) -> Result<SelectionSnapshot, String> {
         .map_err(|error| format!("無法重複上次範圍；螢幕配置可能已變更：{error}"))
 }
 
+pub fn capture_monitor(app: AppHandle, device_name: &str) -> Result<SelectionSnapshot, String> {
+    let frame = capture_frame()?;
+    let monitor = frame
+        .monitors
+        .iter()
+        .find(|monitor| monitor.device_name == device_name)
+        .ok_or_else(|| format!("找不到顯示器：{device_name}"))?;
+    let global_selection = monitor.bounds;
+    let local_selection = RectInfo {
+        x: global_selection.x - frame.virtual_desktop.x,
+        y: global_selection.y - frame.virtual_desktop.y,
+        width: global_selection.width,
+        height: global_selection.height,
+    };
+    let snapshot = save_selection(&app, &frame, local_selection, global_selection)?;
+    save_last_selection(&app, global_selection)?;
+    Ok(snapshot)
+}
+
 fn save_selection(
     app: &AppHandle,
     frame: &crate::capture::DesktopFrame,

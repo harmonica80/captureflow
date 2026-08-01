@@ -105,6 +105,10 @@ pub(crate) fn capture_frame() -> Result<DesktopFrame, String> {
     })
 }
 
+pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
+    platform::list_monitors()
+}
+
 fn path_to_string(path: PathBuf) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -146,6 +150,10 @@ mod platform {
             let pixels = capture_pixels(&virtual_desktop)?;
             Ok((virtual_desktop, monitors, pixels))
         }
+    }
+
+    pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
+        unsafe { enumerate_monitors() }
     }
 
     unsafe fn enumerate_monitors() -> Result<Vec<MonitorInfo>, String> {
@@ -304,5 +312,9 @@ mod platform {
 
     pub fn capture() -> Result<(RectInfo, Vec<MonitorInfo>, Vec<u8>), String> {
         Err("PoC-A 目前只支援 Windows".into())
+    }
+
+    pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
+        Err("顯示器列舉目前只支援 Windows".into())
     }
 }

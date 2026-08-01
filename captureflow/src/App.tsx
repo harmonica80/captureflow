@@ -43,6 +43,8 @@ type CapabilityReport = {
 function App() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<DesktopSnapshot | null>(null);
+  const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
+  const [capturingMonitor, setCapturingMonitor] = useState("");
   const [error, setError] = useState("");
   const [selecting, setSelecting] = useState(false);
   const [repeating, setRepeating] = useState(false);
@@ -65,6 +67,12 @@ function App() {
       void stopSelection.then((unlisten) => unlisten());
       void stopError.then((unlisten) => unlisten());
     };
+  }, []);
+
+  useEffect(() => {
+    void invoke<MonitorInfo[]>("list_monitors")
+      .then(setMonitors)
+      .catch((reason) => setError(String(reason)));
   }, []);
 
   async function runPoc() {
@@ -103,6 +111,20 @@ function App() {
       setError(String(reason));
     } finally {
       setRepeating(false);
+    }
+  }
+
+  async function captureSelectedMonitor(deviceName: string) {
+    setCapturingMonitor(deviceName);
+    setError("");
+    setOutputStatus("");
+    try {
+      setSelection(await invoke<SelectionSnapshot>("capture_monitor", { deviceName }));
+      setOutputStatus(`已擷取 ${deviceName}`);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setCapturingMonitor("");
     }
   }
 
@@ -203,6 +225,22 @@ function App() {
             {checkingCapabilities ? "檢查中…" : "檢查錄影與 OCR 能力"}
           </button>
         </div>
+        {monitors.length > 0 && (
+          <div className="monitor-picker" aria-label="指定螢幕快速擷取">
+            <h2>指定螢幕快速擷取</h2>
+            {monitors.map((monitor) => (
+              <button
+                key={monitor.deviceName}
+                onClick={() => captureSelectedMonitor(monitor.deviceName)}
+                disabled={capturingMonitor !== ""}
+              >
+                <span>{monitor.deviceName}{monitor.isPrimary ? " · 主要螢幕" : ""}</span>
+                <small>{monitor.bounds.width} × {monitor.bounds.height} · {Math.round(monitor.scaleFactor * 100)}%</small>
+                <b>{capturingMonitor === monitor.deviceName ? "擷取中…" : "擷取此螢幕"}</b>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       {capabilities && (
