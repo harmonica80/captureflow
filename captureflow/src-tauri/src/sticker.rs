@@ -26,13 +26,13 @@ mod platform {
     use windows::{
         core::w,
         Win32::{
-            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
+            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
             Graphics::Gdi::{
-                BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
-                GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, SelectObject,
-                SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
-                BI_RGB, DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID,
-                SRCCOPY, TRANSPARENT,
+                Arc, BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, Ellipse, EndPaint,
+                FillRect, GetStockObject, InvalidateRect, LineTo, MoveToEx, Polyline, Rectangle,
+                SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
+                BITMAPINFOHEADER, BI_RGB, DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH,
+                PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -531,19 +531,31 @@ mod platform {
         SelectObject(dc, old_pen);
         DeleteObject(border_pen.into());
 
+        let icon_pen = CreatePen(PS_SOLID, 2, COLORREF(0x0031_2A24));
+        let old_pen = SelectObject(dc, icon_pen.into());
+        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        if state.locked {
+            draw_lock_icon(dc, 26, 20);
+        } else {
+            draw_move_icon(dc, 26, 20);
+        }
+        draw_opacity_icon(dc, 78, 20, false);
+        draw_opacity_icon(dc, 130, 20, true);
+        draw_close_icon(dc, width - 25, 20);
+        draw_zoom_icon(dc, 174, 20);
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(icon_pen.into());
+
         let old_font = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, COLORREF(0x0031_2A24));
-        draw_text(dc, 18, 10, if state.locked { "鎖" } else { "↔" });
-        draw_text(dc, 68, 10, "α−");
-        draw_text(dc, 120, 10, "α+");
         let status = format!(
-            "{}%  α{}%",
+            "{}%   α{}%",
             state.scale_percent,
             (state.opacity as f64 / 255.0 * 100.0).round() as i32
         );
-        draw_text(dc, 178, 10, &status);
-        draw_text(dc, width - 31, 10, "×");
+        draw_text(dc, 188, 11, &status);
         SelectObject(dc, old_font);
 
         let separator_pen = CreatePen(PS_SOLID, 1, COLORREF(0x00D0_CBC6));
@@ -554,6 +566,79 @@ mod platform {
         }
         SelectObject(dc, old_pen);
         DeleteObject(separator_pen.into());
+    }
+
+    unsafe fn draw_move_icon(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
+        MoveToEx(dc, x - 9, y, None);
+        LineTo(dc, x + 9, y);
+        MoveToEx(dc, x - 9, y, None);
+        LineTo(dc, x - 5, y - 4);
+        MoveToEx(dc, x - 9, y, None);
+        LineTo(dc, x - 5, y + 4);
+        MoveToEx(dc, x + 9, y, None);
+        LineTo(dc, x + 5, y - 4);
+        MoveToEx(dc, x + 9, y, None);
+        LineTo(dc, x + 5, y + 4);
+        MoveToEx(dc, x, y - 9, None);
+        LineTo(dc, x, y + 9);
+        MoveToEx(dc, x, y - 9, None);
+        LineTo(dc, x - 4, y - 5);
+        MoveToEx(dc, x, y - 9, None);
+        LineTo(dc, x + 4, y - 5);
+        MoveToEx(dc, x, y + 9, None);
+        LineTo(dc, x - 4, y + 5);
+        MoveToEx(dc, x, y + 9, None);
+        LineTo(dc, x + 4, y + 5);
+    }
+
+    unsafe fn draw_lock_icon(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
+        Rectangle(dc, x - 8, y - 1, x + 8, y + 10);
+        Arc(dc, x - 6, y - 10, x + 6, y + 4, x + 6, y - 2, x - 6, y - 2);
+        Ellipse(dc, x - 1, y + 3, x + 2, y + 6);
+    }
+
+    unsafe fn draw_opacity_icon(
+        dc: windows::Win32::Graphics::Gdi::HDC,
+        x: i32,
+        y: i32,
+        increase: bool,
+    ) {
+        let drop = [
+            POINT { x: x - 7, y: y + 1 },
+            POINT { x, y: y - 9 },
+            POINT { x: x + 7, y: y + 1 },
+            POINT { x: x + 6, y: y + 7 },
+            POINT {
+                x: x + 2,
+                y: y + 10,
+            },
+            POINT {
+                x: x - 2,
+                y: y + 10,
+            },
+            POINT { x: x - 6, y: y + 7 },
+            POINT { x: x - 7, y: y + 1 },
+        ];
+        Polyline(dc, &drop);
+        MoveToEx(dc, x + 9, y + 6, None);
+        LineTo(dc, x + 17, y + 6);
+        if increase {
+            MoveToEx(dc, x + 13, y + 2, None);
+            LineTo(dc, x + 13, y + 10);
+        }
+    }
+
+    unsafe fn draw_zoom_icon(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
+        Ellipse(dc, x - 7, y - 7, x + 5, y + 5);
+        MoveToEx(dc, x + 3, y + 3, None);
+        LineTo(dc, x + 9, y + 9);
+    }
+
+    unsafe fn draw_close_icon(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
+        MoveToEx(dc, x - 7, y - 7, None);
+        LineTo(dc, x + 7, y + 7);
+        MoveToEx(dc, x + 7, y - 7, None);
+        LineTo(dc, x - 7, y + 7);
     }
 
     unsafe fn draw_text(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32, text: &str) {
