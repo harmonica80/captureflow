@@ -23,9 +23,20 @@ pub struct CapabilityReport {
 
 #[cfg(windows)]
 pub fn run() -> Result<CapabilityReport, String> {
-    use windows::{Graphics::Capture::GraphicsCaptureSession, Media::Ocr::OcrEngine};
+    use windows::{
+        Graphics::Capture::GraphicsCaptureSession,
+        Media::Ocr::OcrEngine,
+        Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
+    };
 
-    let _apartment = windows::core::initialize_mta().map_err(|error| error.to_string())?;
+    struct WinRtApartment;
+    impl Drop for WinRtApartment {
+        fn drop(&mut self) {
+            unsafe { RoUninitialize() };
+        }
+    }
+    unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.map_err(|error| error.to_string())?;
+    let _apartment = WinRtApartment;
     let windows_graphics_capture = GraphicsCaptureSession::IsSupported().unwrap_or(false);
     let languages = OcrEngine::AvailableRecognizerLanguages().map_err(|error| error.to_string())?;
     let mut ocr_languages = Vec::new();
@@ -55,7 +66,8 @@ pub fn run() -> Result<CapabilityReport, String> {
         windows_ocr: !ocr_languages.is_empty(),
         traditional_chinese_ocr,
         english_ocr,
-        ocr_max_image_dimension: OcrEngine::MaxImageDimension(),
+        ocr_max_image_dimension: OcrEngine::MaxImageDimension()
+            .map_err(|error| error.to_string())?,
         ocr_languages,
         recording_path: "Windows.Graphics.Capture + Direct3D 11",
         mp4_encoder: "Windows Media Foundation H.264",

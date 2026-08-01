@@ -3,7 +3,6 @@ mod diagnostics;
 mod selector;
 mod sticker;
 mod sticker_store;
-use tauri::Manager;
 
 #[tauri::command]
 fn capture_virtual_desktop(app: tauri::AppHandle) -> Result<capture::DesktopSnapshot, String> {
