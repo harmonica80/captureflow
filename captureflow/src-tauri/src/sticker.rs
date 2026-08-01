@@ -1,6 +1,7 @@
+use crate::sticker_store::{self, StickerRecord};
 use std::path::Path;
 
-pub fn open(image_path: String, x: i32, y: i32) -> Result<(), String> {
+pub fn open(app: &tauri::AppHandle, image_path: String, x: i32, y: i32) -> Result<(), String> {
     let image = image::open(Path::new(&image_path))
         .map_err(|error| format!("無法讀取貼圖圖片：{error}"))?
         .into_rgba8();
@@ -12,17 +13,55 @@ pub fn open(image_path: String, x: i32, y: i32) -> Result<(), String> {
     for pixel in bgra.chunks_exact_mut(4) {
         pixel.swap(0, 2);
     }
+    let persistence_path = sticker_store::path(app)?;
+    let record = StickerRecord {
+        id: sticker_store::next_id(),
+        image_path,
+        x,
+        y,
+        width: width as i32,
+        height: height as i32,
+        opacity: 255,
+        locked: false,
+        click_through: false,
+    };
+    sticker_store::upsert(&persistence_path, &record);
 
     std::thread::Builder::new()
         .name("captureflow-sticker".into())
-        .spawn(move || platform::run(width as i32, height as i32, x, y, bgra))
+        .spawn(move || platform::run(record, persistence_path, width as i32, height as i32, bgra))
         .map_err(|error| format!("無法啟動貼圖視窗：{error}"))?;
     Ok(())
 }
 
+pub fn restore(app: &tauri::AppHandle) {
+    let Ok(persistence_path) = sticker_store::path(app) else {
+        return;
+    };
+    for record in sticker_store::load(&persistence_path) {
+        let Ok(image) = image::open(Path::new(&record.image_path)) else {
+            sticker_store::remove(&persistence_path, record.id);
+            continue;
+        };
+        let image = image.into_rgba8();
+        let (width, height) = image.dimensions();
+        let mut bgra = image.into_raw();
+        for pixel in bgra.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        let persistence_path = persistence_path.clone();
+        let _ = std::thread::Builder::new()
+            .name("captureflow-sticker-restore".into())
+            .spawn(move || {
+                platform::run(record, persistence_path, width as i32, height as i32, bgra)
+            });
+    }
+}
+
 #[cfg(windows)]
 mod platform {
-    use std::{cell::RefCell, mem::size_of};
+    use super::{sticker_store, StickerRecord};
+    use std::{cell::RefCell, mem::size_of, path::PathBuf};
     use windows::{
         core::w,
         Win32::{
@@ -71,6 +110,9 @@ mod platform {
     }
 
     struct StickerState {
+        record_id: u64,
+        image_path: String,
+        persistence_path: PathBuf,
         source_width: i32,
         source_height: i32,
         bgra: Vec<u8>,
@@ -82,26 +124,49 @@ mod platform {
         toolbar_hwnd: HWND,
     }
 
-    pub fn run(source_width: i32, source_height: i32, x: i32, y: i32, bgra: Vec<u8>) {
+    pub fn run(
+        record: StickerRecord,
+        persistence_path: PathBuf,
+        source_width: i32,
+        source_height: i32,
+        bgra: Vec<u8>,
+    ) {
+        let scale_percent =
+            (record.width as f64 / source_width.max(1) as f64 * 100.0).round() as i32;
         STATE.with(|state| {
             *state.borrow_mut() = Some(StickerState {
+                record_id: record.id,
+                image_path: record.image_path.clone(),
+                persistence_path,
                 source_width,
                 source_height,
                 bgra,
-                opacity: 255,
-                locked: false,
-                click_through: false,
-                scale_percent: 100,
+                opacity: record.opacity,
+                locked: record.locked,
+                click_through: record.click_through,
+                scale_percent,
                 sticker_hwnd: HWND::default(),
                 toolbar_hwnd: HWND::default(),
             });
         });
-        let _ = unsafe { run_window(x, y, source_width, source_height) };
+        let _ = unsafe { run_window(record.x, record.y, record.width, record.height) };
         STATE.with(|state| *state.borrow_mut() = None);
     }
 
-    unsafe fn run_window(x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+    unsafe fn run_window(mut x: i32, mut y: i32, width: i32, height: i32) -> Result<(), String> {
         SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let virtual_left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let virtual_top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let virtual_right = virtual_left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let virtual_bottom = virtual_top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        x = x.clamp(
+            virtual_left,
+            (virtual_right - width.min(80)).max(virtual_left),
+        );
+        y = y.clamp(
+            virtual_top,
+            (virtual_bottom - height.min(60)).max(virtual_top),
+        );
         let module =
             GetModuleHandleW(None).map_err(|error| format!("GetModuleHandleW：{error}"))?;
         let instance = HINSTANCE(module.0);
@@ -140,7 +205,14 @@ mod platform {
             None,
         )
         .map_err(|error| format!("無法建立貼圖視窗：{error}"))?;
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)
+        let (initial_opacity, initial_click_through) = STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|state| (state.opacity, state.click_through))
+                .unwrap_or((255, false))
+        });
+        SetLayeredWindowAttributes(hwnd, COLORREF(0), initial_opacity, LWA_ALPHA)
             .map_err(|error| format!("無法設定貼圖透明度：{error}"))?;
         let toolbar_hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_TOPMOST.0 | WS_EX_TOOLWINDOW.0),
@@ -163,6 +235,11 @@ mod platform {
                 state.toolbar_hwnd = toolbar_hwnd;
             }
         });
+        if initial_click_through {
+            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT.0 as isize);
+        }
+        persist_current(hwnd);
         ShowWindow(hwnd, SW_SHOW);
         ShowWindow(toolbar_hwnd, SW_SHOW);
         position_toolbar(hwnd);
@@ -221,7 +298,7 @@ mod platform {
                 LRESULT(0)
             }
             WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
-                let _ = DestroyWindow(hwnd);
+                close_sticker(hwnd);
                 LRESULT(0)
             }
             WM_KEYDOWN if wparam.0 as u16 == b'L' as u16 => {
@@ -233,11 +310,12 @@ mod platform {
                 LRESULT(0)
             }
             WM_RBUTTONUP | WM_NCRBUTTONUP => {
-                let _ = DestroyWindow(hwnd);
+                close_sticker(hwnd);
                 LRESULT(0)
             }
             WM_MOVE | WM_SIZE => {
                 position_toolbar(hwnd);
+                persist_current(hwnd);
                 LRESULT(0)
             }
             WM_DESTROY => {
@@ -293,7 +371,7 @@ mod platform {
             WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
                 let sticker = sticker_hwnd();
                 if !sticker.is_invalid() {
-                    let _ = DestroyWindow(sticker);
+                    close_sticker(sticker);
                 }
                 LRESULT(0)
             }
@@ -314,7 +392,7 @@ mod platform {
             WM_RBUTTONUP | WM_NCRBUTTONUP => {
                 let sticker = sticker_hwnd();
                 if !sticker.is_invalid() {
-                    let _ = DestroyWindow(sticker);
+                    close_sticker(sticker);
                 }
                 LRESULT(0)
             }
@@ -430,6 +508,7 @@ mod platform {
         });
         position_toolbar(hwnd);
         invalidate_sticker_and_toolbar(hwnd);
+        persist_current(hwnd);
     }
 
     unsafe fn adjust_opacity(hwnd: HWND, delta: i32) {
@@ -440,6 +519,7 @@ mod platform {
             }
         });
         invalidate_sticker_and_toolbar(hwnd);
+        persist_current(hwnd);
     }
 
     unsafe fn toolbar_click(hwnd: HWND, point: (i32, i32)) {
@@ -452,7 +532,7 @@ mod platform {
             return;
         }
         if point.0 >= client.right - 48 {
-            let _ = DestroyWindow(hwnd);
+            close_sticker(hwnd);
         } else if point.0 < 52 {
             toggle_lock(hwnd);
         } else if point.0 < 104 {
@@ -471,6 +551,7 @@ mod platform {
             }
         });
         invalidate_sticker_and_toolbar(hwnd);
+        persist_current(hwnd);
     }
 
     unsafe fn toggle_click_through(hwnd: HWND) {
@@ -491,6 +572,46 @@ mod platform {
         };
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next_style);
         invalidate_sticker_and_toolbar(hwnd);
+        persist_current(hwnd);
+    }
+
+    unsafe fn persist_current(hwnd: HWND) {
+        if hwnd.is_invalid() {
+            return;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return;
+        }
+        STATE.with(|state| {
+            let state = state.borrow();
+            let Some(state) = state.as_ref() else {
+                return;
+            };
+            sticker_store::upsert(
+                &state.persistence_path,
+                &StickerRecord {
+                    id: state.record_id,
+                    image_path: state.image_path.clone(),
+                    x: rect.left,
+                    y: rect.top,
+                    width: rect.right - rect.left,
+                    height: rect.bottom - rect.top,
+                    opacity: state.opacity,
+                    locked: state.locked,
+                    click_through: state.click_through,
+                },
+            );
+        });
+    }
+
+    unsafe fn close_sticker(hwnd: HWND) {
+        STATE.with(|state| {
+            if let Some(state) = state.borrow().as_ref() {
+                sticker_store::remove(&state.persistence_path, state.record_id);
+            }
+        });
+        let _ = DestroyWindow(hwnd);
     }
 
     unsafe fn position_toolbar(sticker: HWND) {
