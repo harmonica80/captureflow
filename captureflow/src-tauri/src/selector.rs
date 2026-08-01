@@ -43,10 +43,34 @@ pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, St
         width: local_selection.width,
         height: local_selection.height,
     };
+    let snapshot = save_selection(&app, &frame, local_selection, global_selection)?;
+    save_last_selection(&app, global_selection)?;
+    Ok(Some(snapshot))
+}
+
+pub fn repeat_last_area(app: AppHandle) -> Result<SelectionSnapshot, String> {
+    let global_selection = load_last_selection(&app)?;
+    let frame = capture_frame()?;
+    let local_selection = RectInfo {
+        x: global_selection.x - frame.virtual_desktop.x,
+        y: global_selection.y - frame.virtual_desktop.y,
+        width: global_selection.width,
+        height: global_selection.height,
+    };
+    save_selection(&app, &frame, local_selection, global_selection)
+        .map_err(|error| format!("無法重複上次範圍；螢幕配置可能已變更：{error}"))
+}
+
+fn save_selection(
+    app: &AppHandle,
+    frame: &crate::capture::DesktopFrame,
+    local_selection: RectInfo,
+    global_selection: RectInfo,
+) -> Result<SelectionSnapshot, String> {
     let cropped = crop_rgba(
         &frame.rgba,
-        virtual_desktop.width,
-        virtual_desktop.height,
+        frame.virtual_desktop.width,
+        frame.virtual_desktop.height,
         local_selection,
     )?;
 
@@ -76,7 +100,7 @@ pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, St
     let metadata = SelectionMetadata {
         schema_version: 1,
         captured_at_unix_ms,
-        virtual_desktop,
+        virtual_desktop: frame.virtual_desktop,
         selection: global_selection,
         monitors: &frame.monitors,
     };
@@ -87,13 +111,43 @@ pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, St
     )
     .map_err(|error| format!("無法儲存選取 JSON：{error}"))?;
 
-    Ok(Some(SelectionSnapshot {
+    Ok(SelectionSnapshot {
         image_path: path_string(image_path),
         metadata_path: path_string(metadata_path),
         selection: global_selection,
         width: local_selection.width,
         height: local_selection.height,
-    }))
+    })
+}
+
+fn last_selection_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("無法取得應用程式資料目錄：{error}"))?
+        .join("last-selection.json"))
+}
+
+fn save_last_selection(app: &AppHandle, selection: RectInfo) -> Result<(), String> {
+    let path = last_selection_path(app)?;
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(&selection)
+            .map_err(|error| format!("無法建立上次範圍資料：{error}"))?,
+    )
+    .map_err(|error| format!("無法儲存上次範圍：{error}"))
+}
+
+fn load_last_selection(app: &AppHandle) -> Result<RectInfo, String> {
+    let path = last_selection_path(app)?;
+    let bytes = fs::read(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "尚無上次擷取範圍，請先完成一次框選。".to_string()
+        } else {
+            format!("無法讀取上次範圍：{error}")
+        }
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("上次範圍資料已損壞：{error}"))
 }
 
 fn crop_rgba(

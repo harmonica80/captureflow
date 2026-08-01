@@ -19,6 +19,15 @@ async fn select_screen_area(
 }
 
 #[tauri::command]
+async fn repeat_last_selection(
+    app: tauri::AppHandle,
+) -> Result<selector::SelectionSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || selector::repeat_last_area(app))
+        .await
+        .map_err(|error| format!("重複擷取執行緒異常結束：{error}"))?
+}
+
+#[tauri::command]
 fn open_sticker(app: tauri::AppHandle, image_path: String, x: i32, y: i32) -> Result<(), String> {
     sticker::open(&app, image_path, x, y)
 }
@@ -134,6 +143,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             capture_virtual_desktop,
             select_screen_area,
+            repeat_last_selection,
             open_sticker,
             export_selection,
             run_capability_diagnostics

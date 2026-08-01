@@ -45,6 +45,7 @@ function App() {
   const [result, setResult] = useState<DesktopSnapshot | null>(null);
   const [error, setError] = useState("");
   const [selecting, setSelecting] = useState(false);
+  const [repeating, setRepeating] = useState(false);
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
   const [openingSticker, setOpeningSticker] = useState(false);
   const [checkingCapabilities, setCheckingCapabilities] = useState(false);
@@ -88,6 +89,20 @@ function App() {
       setError(String(reason));
     } finally {
       setSelecting(false);
+    }
+  }
+
+  async function repeatLastSelection() {
+    setRepeating(true);
+    setError("");
+    setOutputStatus("");
+    try {
+      setSelection(await invoke<SelectionSnapshot>("repeat_last_selection"));
+      setOutputStatus("已使用上次範圍擷取最新畫面");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setRepeating(false);
     }
   }
 
@@ -177,6 +192,9 @@ function App() {
         <div className="action-row">
           <button className="capture-button primary" onClick={runSelector} disabled={selecting}>
             {selecting ? "選取模式執行中…" : "開始框選螢幕範圍"}
+          </button>
+          <button className="capture-button" onClick={repeatLastSelection} disabled={repeating}>
+            {repeating ? "正在重複擷取…" : "重複上次範圍"}
           </button>
           <button className="capture-button" onClick={runPoc} disabled={running}>
             {running ? "正在擷取…" : "執行完整桌面快照"}
