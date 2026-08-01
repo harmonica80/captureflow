@@ -25,14 +25,26 @@ mod platform {
     use std::{cell::RefCell, mem::size_of};
     use windows::{
         core::w,
+        Foundation::Numerics::Vector2,
         Win32::{
-            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
-            Graphics::Gdi::{
-                Arc, BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, Ellipse, EndPaint,
-                FillRect, GetStockObject, InvalidateRect, LineTo, MoveToEx, Polyline, Rectangle,
-                SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
-                BITMAPINFOHEADER, BI_RGB, DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH,
-                PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
+            Graphics::{
+                Direct2D::{
+                    Common::{D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT},
+                    D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget,
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_ELLIPSE,
+                    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+                    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                    D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
+                },
+                Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+                Graphics::Gdi::{
+                    BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
+                    GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, SelectObject,
+                    SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
+                    BI_RGB, DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID,
+                    SRCCOPY, TRANSPARENT,
+                },
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -531,21 +543,7 @@ mod platform {
         SelectObject(dc, old_pen);
         DeleteObject(border_pen.into());
 
-        let icon_pen = CreatePen(PS_SOLID, 2, COLORREF(0x0031_2A24));
-        let old_pen = SelectObject(dc, icon_pen.into());
-        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        if state.locked {
-            draw_lock_icon(dc, 26, 20);
-        } else {
-            draw_move_icon(dc, 26, 20);
-        }
-        draw_opacity_icon(dc, 78, 20, false);
-        draw_opacity_icon(dc, 130, 20, true);
-        draw_close_icon(dc, width - 25, 20);
-        draw_zoom_icon(dc, 174, 20);
-        SelectObject(dc, old_brush);
-        SelectObject(dc, old_pen);
-        DeleteObject(icon_pen.into());
+        draw_vector_icons(dc, width, state.locked);
 
         let old_font = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
         SetBkMode(dc, TRANSPARENT);
@@ -568,77 +566,143 @@ mod platform {
         DeleteObject(separator_pen.into());
     }
 
-    unsafe fn draw_move_icon(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
-        MoveToEx(dc, x - 9, y, None);
-        LineTo(dc, x + 9, y);
-        MoveToEx(dc, x - 9, y, None);
-        LineTo(dc, x - 5, y - 4);
-        MoveToEx(dc, x - 9, y, None);
-        LineTo(dc, x - 5, y + 4);
-        MoveToEx(dc, x + 9, y, None);
-        LineTo(dc, x + 5, y - 4);
-        MoveToEx(dc, x + 9, y, None);
-        LineTo(dc, x + 5, y + 4);
-        MoveToEx(dc, x, y - 9, None);
-        LineTo(dc, x, y + 9);
-        MoveToEx(dc, x, y - 9, None);
-        LineTo(dc, x - 4, y - 5);
-        MoveToEx(dc, x, y - 9, None);
-        LineTo(dc, x + 4, y - 5);
-        MoveToEx(dc, x, y + 9, None);
-        LineTo(dc, x - 4, y + 5);
-        MoveToEx(dc, x, y + 9, None);
-        LineTo(dc, x + 4, y + 5);
-    }
-
-    unsafe fn draw_lock_icon(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
-        Rectangle(dc, x - 8, y - 1, x + 8, y + 10);
-        Arc(dc, x - 6, y - 10, x + 6, y + 4, x + 6, y - 2, x - 6, y - 2);
-        Ellipse(dc, x - 1, y + 3, x + 2, y + 6);
-    }
-
-    unsafe fn draw_opacity_icon(
-        dc: windows::Win32::Graphics::Gdi::HDC,
-        x: i32,
-        y: i32,
-        increase: bool,
-    ) {
-        let drop = [
-            POINT { x: x - 7, y: y + 1 },
-            POINT { x, y: y - 9 },
-            POINT { x: x + 7, y: y + 1 },
-            POINT { x: x + 6, y: y + 7 },
-            POINT {
-                x: x + 2,
-                y: y + 10,
+    unsafe fn draw_vector_icons(dc: windows::Win32::Graphics::Gdi::HDC, width: i32, locked: bool) {
+        let factory: ID2D1Factory = match D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)
+        {
+            Ok(factory) => factory,
+            Err(_) => return,
+        };
+        let properties = D2D1_RENDER_TARGET_PROPERTIES {
+            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_IGNORE,
             },
-            POINT {
-                x: x - 2,
-                y: y + 10,
-            },
-            POINT { x: x - 6, y: y + 7 },
-            POINT { x: x - 7, y: y + 1 },
-        ];
-        Polyline(dc, &drop);
-        MoveToEx(dc, x + 9, y + 6, None);
-        LineTo(dc, x + 17, y + 6);
-        if increase {
-            MoveToEx(dc, x + 13, y + 2, None);
-            LineTo(dc, x + 13, y + 10);
+            dpiX: 0.0,
+            dpiY: 0.0,
+            usage: D2D1_RENDER_TARGET_USAGE_NONE,
+            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+        };
+        let target = match factory.CreateDCRenderTarget(&properties) {
+            Ok(target) => target,
+            Err(_) => return,
+        };
+        let bounds = RECT {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: 40,
+        };
+        if target.BindDC(dc, &bounds).is_err() {
+            return;
         }
-    }
+        let brush = match target.CreateSolidColorBrush(
+            &D2D1_COLOR_F {
+                r: 36.0 / 255.0,
+                g: 42.0 / 255.0,
+                b: 49.0 / 255.0,
+                a: 1.0,
+            },
+            None,
+        ) {
+            Ok(brush) => brush,
+            Err(_) => return,
+        };
+        target.BeginDraw();
+        target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        let line = |x1: f32, y1: f32, x2: f32, y2: f32| {
+            target.DrawLine(
+                Vector2 { X: x1, Y: y1 },
+                Vector2 { X: x2, Y: y2 },
+                &brush,
+                1.6,
+                None,
+            );
+        };
 
-    unsafe fn draw_zoom_icon(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
-        Ellipse(dc, x - 7, y - 7, x + 5, y + 5);
-        MoveToEx(dc, x + 3, y + 3, None);
-        LineTo(dc, x + 9, y + 9);
-    }
+        if locked {
+            target.DrawRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect: windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F {
+                        left: 18.0,
+                        top: 19.0,
+                        right: 34.0,
+                        bottom: 30.0,
+                    },
+                    radiusX: 1.5,
+                    radiusY: 1.5,
+                },
+                &brush,
+                1.6,
+                None,
+            );
+            target.DrawEllipse(
+                &D2D1_ELLIPSE {
+                    point: Vector2 { X: 26.0, Y: 16.0 },
+                    radiusX: 5.5,
+                    radiusY: 6.5,
+                },
+                &brush,
+                1.6,
+                None,
+            );
+        } else {
+            for (x1, y1, x2, y2) in [
+                (17., 20., 35., 20.),
+                (17., 20., 21., 16.),
+                (17., 20., 21., 24.),
+                (35., 20., 31., 16.),
+                (35., 20., 31., 24.),
+                (26., 11., 26., 29.),
+                (26., 11., 22., 15.),
+                (26., 11., 30., 15.),
+                (26., 29., 22., 25.),
+                (26., 29., 30., 25.),
+            ] {
+                line(x1, y1, x2, y2);
+            }
+        }
 
-    unsafe fn draw_close_icon(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
-        MoveToEx(dc, x - 7, y - 7, None);
-        LineTo(dc, x + 7, y + 7);
-        MoveToEx(dc, x + 7, y - 7, None);
-        LineTo(dc, x - 7, y + 7);
+        for (x, plus) in [(78.0, false), (130.0, true)] {
+            let drop = [
+                (-7., 1.),
+                (0., -9.),
+                (7., 1.),
+                (6., 7.),
+                (2., 10.),
+                (-2., 10.),
+                (-6., 7.),
+                (-7., 1.),
+            ];
+            for pair in drop.windows(2) {
+                line(
+                    x + pair[0].0,
+                    20. + pair[0].1,
+                    x + pair[1].0,
+                    20. + pair[1].1,
+                );
+            }
+            line(x + 9., 26., x + 17., 26.);
+            if plus {
+                line(x + 13., 22., x + 13., 30.);
+            }
+        }
+
+        target.DrawEllipse(
+            &D2D1_ELLIPSE {
+                point: Vector2 { X: 173.0, Y: 19.0 },
+                radiusX: 6.0,
+                radiusY: 6.0,
+            },
+            &brush,
+            1.6,
+            None,
+        );
+        line(177., 23., 183., 29.);
+        let close_x = (width - 25) as f32;
+        line(close_x - 7., 13., close_x + 7., 27.);
+        line(close_x + 7., 13., close_x - 7., 27.);
+        let _ = target.EndDraw(None, None);
     }
 
     unsafe fn draw_text(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32, text: &str) {
