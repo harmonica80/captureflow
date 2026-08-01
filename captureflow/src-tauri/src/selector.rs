@@ -211,10 +211,10 @@ mod platform {
         Win32::{
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
             Graphics::Gdi::{
-                BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject,
-                InvalidateRect, Rectangle, SelectObject, SetBkMode, SetTextColor, StretchDIBits,
-                TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH,
-                PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+                BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
+                GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, SelectObject,
+                SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
+                BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -250,6 +250,7 @@ mod platform {
         interaction: Option<Interaction>,
         selection: Option<RectInfo>,
         hover_candidate: Option<RectInfo>,
+        cursor_position: (i32, i32),
         sender: Option<mpsc::Sender<Option<RectInfo>>>,
     }
 
@@ -308,6 +309,7 @@ mod platform {
             interaction: None,
             selection: None,
             hover_candidate: None,
+            cursor_position: (virtual_desktop.width / 2, virtual_desktop.height / 2),
             sender: Some(sender),
         });
 
@@ -418,6 +420,11 @@ mod platform {
             WM_MOUSEMOVE => {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
+                        let pointer = mouse_point(lparam);
+                        state.cursor_position = (
+                            pointer.0.clamp(0, state.width.saturating_sub(1)),
+                            pointer.1.clamp(0, state.height.saturating_sub(1)),
+                        );
                         if let Some(interaction) = state.interaction {
                             let current =
                                 clamp_point(mouse_point(lparam), state.width, state.height);
@@ -616,9 +623,123 @@ mod platform {
                         TextOutW(dc, rect.x.max(8), label_y, &dimensions);
                     }
                 }
+                draw_magnifier(dc, state);
             }
         }
         EndPaint(hwnd, &paint);
+    }
+
+    unsafe fn draw_magnifier(dc: windows::Win32::Graphics::Gdi::HDC, state: &SelectorState) {
+        const PANEL_WIDTH: i32 = 240;
+        const PANEL_HEIGHT: i32 = 158;
+        const SAMPLE_COLUMNS: i32 = 11;
+        const SAMPLE_ROWS: i32 = 5;
+        const PIXEL_SIZE: i32 = 20;
+        const PADDING: i32 = 10;
+
+        let cursor = state.cursor_position;
+        let panel_x = if cursor.0 + 28 + PANEL_WIDTH <= state.width {
+            cursor.0 + 28
+        } else {
+            (cursor.0 - 28 - PANEL_WIDTH).max(0)
+        };
+        let panel_y = if cursor.1 + 28 + PANEL_HEIGHT <= state.height {
+            cursor.1 + 28
+        } else {
+            (cursor.1 - 28 - PANEL_HEIGHT).max(0)
+        };
+        let panel_rect = RECT {
+            left: panel_x,
+            top: panel_y,
+            right: panel_x + PANEL_WIDTH,
+            bottom: panel_y + PANEL_HEIGHT,
+        };
+        let panel_brush = CreateSolidBrush(COLORREF(0x001C_2310));
+        FillRect(dc, &panel_rect, panel_brush);
+        DeleteObject(panel_brush.into());
+
+        let source_x =
+            (cursor.0 - SAMPLE_COLUMNS / 2).clamp(0, (state.width - SAMPLE_COLUMNS).max(0));
+        let source_y = (cursor.1 - SAMPLE_ROWS / 2).clamp(0, (state.height - SAMPLE_ROWS).max(0));
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: state.width,
+                biHeight: -state.height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        StretchDIBits(
+            dc,
+            panel_x + PADDING,
+            panel_y + PADDING,
+            SAMPLE_COLUMNS * PIXEL_SIZE,
+            SAMPLE_ROWS * PIXEL_SIZE,
+            source_x,
+            source_y,
+            SAMPLE_COLUMNS,
+            SAMPLE_ROWS,
+            Some(state.bgra.as_ptr().cast()),
+            &info,
+            DIB_RGB_COLORS,
+            SRCCOPY,
+        );
+
+        let focus_x = panel_x + PADDING + (cursor.0 - source_x) * PIXEL_SIZE;
+        let focus_y = panel_y + PADDING + (cursor.1 - source_y) * PIXEL_SIZE;
+        let focus_pen = CreatePen(PS_SOLID, 2, COLORREF(0x00AD_E774));
+        let old_pen = SelectObject(dc, focus_pen.into());
+        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(
+            dc,
+            focus_x,
+            focus_y,
+            focus_x + PIXEL_SIZE + 1,
+            focus_y + PIXEL_SIZE + 1,
+        );
+        MoveToEx(dc, focus_x + PIXEL_SIZE / 2, focus_y - 4, None);
+        let _ = LineTo(dc, focus_x + PIXEL_SIZE / 2, focus_y + PIXEL_SIZE + 4);
+        MoveToEx(dc, focus_x - 4, focus_y + PIXEL_SIZE / 2, None);
+        let _ = LineTo(dc, focus_x + PIXEL_SIZE + 4, focus_y + PIXEL_SIZE / 2);
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(focus_pen.into());
+
+        let pixel_index = ((cursor.1 as usize * state.width as usize + cursor.0 as usize) * 4)
+            .min(state.bgra.len().saturating_sub(4));
+        let blue = state.bgra[pixel_index];
+        let green = state.bgra[pixel_index + 1];
+        let red = state.bgra[pixel_index + 2];
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, COLORREF(0x00F5_F7F4));
+        let coordinates = format!(
+            "X {}  Y {}",
+            state.origin_x + cursor.0,
+            state.origin_y + cursor.1
+        );
+        let coordinates: Vec<u16> = coordinates.encode_utf16().collect();
+        TextOutW(dc, panel_x + PADDING, panel_y + 116, &coordinates);
+        let color = format!("#{red:02X}{green:02X}{blue:02X}  RGB {red}, {green}, {blue}");
+        let color: Vec<u16> = color.encode_utf16().collect();
+        TextOutW(dc, panel_x + PADDING, panel_y + 136, &color);
+
+        let border_pen = CreatePen(PS_SOLID, 1, COLORREF(0x00AD_E774));
+        let old_pen = SelectObject(dc, border_pen.into());
+        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(
+            dc,
+            panel_rect.left,
+            panel_rect.top,
+            panel_rect.right,
+            panel_rect.bottom,
+        );
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(border_pen.into());
     }
 
     fn finish(result: Option<RectInfo>) {
