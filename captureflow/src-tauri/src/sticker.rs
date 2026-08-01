@@ -39,13 +39,14 @@ mod platform {
                 Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_ESCAPE},
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                    GetClientRect, GetMessageW, GetWindowRect, PostQuitMessage, RegisterClassW,
-                    SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT, HWND_TOPMOST,
-                    LWA_ALPHA, MSG, SWP_NOACTIVATE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY,
-                    WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_NCHITTEST, WM_NCRBUTTONUP,
-                    WM_PAINT, WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
-                    WS_EX_TOPMOST, WS_POPUP,
+                    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, PostQuitMessage,
+                    RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos,
+                    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT,
+                    HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+                    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SW_SHOW, WINDOW_EX_STYLE,
+                    WM_DESTROY, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST,
+                    WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WS_EX_LAYERED,
+                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -61,8 +62,9 @@ mod platform {
         bgra: Vec<u8>,
         opacity: u8,
         locked: bool,
-        toolbar_visible: bool,
         scale_percent: i32,
+        sticker_hwnd: HWND,
+        toolbar_hwnd: HWND,
     }
 
     pub fn run(source_width: i32, source_height: i32, x: i32, y: i32, bgra: Vec<u8>) {
@@ -73,8 +75,9 @@ mod platform {
                 bgra,
                 opacity: 255,
                 locked: false,
-                toolbar_visible: false,
                 scale_percent: 100,
+                sticker_hwnd: HWND::default(),
+                toolbar_hwnd: HWND::default(),
             });
         });
         let _ = unsafe { run_window(x, y, source_width, source_height) };
@@ -96,6 +99,16 @@ mod platform {
         };
         RegisterClassW(&window_class);
 
+        let toolbar_class_name = w!("CaptureFlowStickerToolbarWindow");
+        let toolbar_class = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(toolbar_proc),
+            hInstance: instance,
+            lpszClassName: toolbar_class_name,
+            ..Default::default()
+        };
+        RegisterClassW(&toolbar_class);
+
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_TOPMOST.0 | WS_EX_TOOLWINDOW.0 | WS_EX_LAYERED.0),
             class_name,
@@ -113,7 +126,30 @@ mod platform {
         .map_err(|error| format!("無法建立貼圖視窗：{error}"))?;
         SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)
             .map_err(|error| format!("無法設定貼圖透明度：{error}"))?;
+        let toolbar_hwnd = CreateWindowExW(
+            WINDOW_EX_STYLE(WS_EX_TOPMOST.0 | WS_EX_TOOLWINDOW.0),
+            toolbar_class_name,
+            w!("CaptureFlow Sticker Toolbar"),
+            WS_POPUP,
+            x,
+            y,
+            width.max(360),
+            34,
+            Some(hwnd),
+            None,
+            Some(instance),
+            None,
+        )
+        .map_err(|error| format!("無法建立貼圖工具列：{error}"))?;
+        STATE.with(|state| {
+            if let Some(state) = state.borrow_mut().as_mut() {
+                state.sticker_hwnd = hwnd;
+                state.toolbar_hwnd = toolbar_hwnd;
+            }
+        });
         ShowWindow(hwnd, SW_SHOW);
+        ShowWindow(toolbar_hwnd, SW_SHOW);
+        position_toolbar(hwnd);
         SetForegroundWindow(hwnd);
 
         let mut message = MSG::default();
@@ -139,7 +175,20 @@ mod platform {
                 paint(hwnd);
                 LRESULT(0)
             }
-            WM_NCHITTEST => hit_test(hwnd, lparam),
+            WM_NCHITTEST => {
+                let locked = STATE.with(|state| {
+                    state
+                        .borrow()
+                        .as_ref()
+                        .map(|state| state.locked)
+                        .unwrap_or(false)
+                });
+                LRESULT(if locked {
+                    HTCLIENT as isize
+                } else {
+                    HTCAPTION as isize
+                })
+            }
             WM_MOUSEWHEEL => {
                 let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
                 if GetKeyState(VK_CONTROL.0 as i32) < 0 {
@@ -151,10 +200,6 @@ mod platform {
                         screen_point(lparam),
                     );
                 }
-                LRESULT(0)
-            }
-            WM_LBUTTONUP => {
-                toolbar_click(hwnd, mouse_point(lparam));
                 LRESULT(0)
             }
             WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
@@ -169,10 +214,82 @@ mod platform {
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
+            WM_MOVE | WM_SIZE => {
+                position_toolbar(hwnd);
+                LRESULT(0)
+            }
             WM_DESTROY => {
+                STATE.with(|state| {
+                    if let Some(state) = state.borrow().as_ref() {
+                        if !state.toolbar_hwnd.is_invalid() {
+                            let _ = DestroyWindow(state.toolbar_hwnd);
+                        }
+                    }
+                });
                 PostQuitMessage(0);
                 LRESULT(0)
             }
+            _ => DefWindowProcW(hwnd, message, wparam, lparam),
+        }
+    }
+
+    unsafe extern "system" fn toolbar_proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match message {
+            WM_PAINT => {
+                paint_toolbar(hwnd);
+                LRESULT(0)
+            }
+            WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+            WM_LBUTTONUP => {
+                let sticker = sticker_hwnd();
+                if !sticker.is_invalid() {
+                    toolbar_click(sticker, mouse_point(lparam));
+                }
+                LRESULT(0)
+            }
+            WM_MOUSEWHEEL => {
+                let sticker = sticker_hwnd();
+                if !sticker.is_invalid() {
+                    let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
+                    if GetKeyState(VK_CONTROL.0 as i32) < 0 {
+                        adjust_opacity(sticker, delta.signum() * 16);
+                    } else {
+                        resize(
+                            sticker,
+                            if delta > 0 { 1.1 } else { 0.9 },
+                            screen_point(lparam),
+                        );
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
+                let sticker = sticker_hwnd();
+                if !sticker.is_invalid() {
+                    let _ = DestroyWindow(sticker);
+                }
+                LRESULT(0)
+            }
+            WM_KEYDOWN if wparam.0 as u16 == b'L' as u16 => {
+                let sticker = sticker_hwnd();
+                if !sticker.is_invalid() {
+                    toggle_lock(sticker);
+                }
+                LRESULT(0)
+            }
+            WM_RBUTTONUP | WM_NCRBUTTONUP => {
+                let sticker = sticker_hwnd();
+                if !sticker.is_invalid() {
+                    let _ = DestroyWindow(sticker);
+                }
+                LRESULT(0)
+            }
+            WM_DESTROY => LRESULT(0),
             _ => DefWindowProcW(hwnd, message, wparam, lparam),
         }
     }
@@ -218,13 +335,23 @@ mod platform {
                     SelectObject(dc, old_brush);
                     SelectObject(dc, old_pen);
                     DeleteObject(border_pen.into());
-
-                    if state.toolbar_visible {
-                        draw_toolbar(dc, client.right, state);
-                    }
                 }
             }
         });
+        EndPaint(hwnd, &paint);
+    }
+
+    unsafe fn paint_toolbar(hwnd: HWND) {
+        let mut paint = PAINTSTRUCT::default();
+        let dc = BeginPaint(hwnd, &mut paint);
+        let mut client = RECT::default();
+        if GetClientRect(hwnd, &mut client).is_ok() {
+            STATE.with(|state| {
+                if let Some(state) = state.borrow().as_ref() {
+                    draw_toolbar(dc, client.right, state);
+                }
+            });
+        }
         EndPaint(hwnd, &paint);
     }
 
@@ -272,7 +399,8 @@ mod platform {
                     (new_width as f64 / state.source_width as f64 * 100.0).round() as i32;
             }
         });
-        InvalidateRect(Some(hwnd), None, false);
+        position_toolbar(hwnd);
+        invalidate_sticker_and_toolbar(hwnd);
     }
 
     unsafe fn adjust_opacity(hwnd: HWND, delta: i32) {
@@ -282,35 +410,7 @@ mod platform {
                 let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), state.opacity, LWA_ALPHA);
             }
         });
-        InvalidateRect(Some(hwnd), None, false);
-    }
-
-    unsafe fn hit_test(hwnd: HWND, lparam: LPARAM) -> LRESULT {
-        let screen = screen_point(lparam);
-        let mut rect = RECT::default();
-        if GetWindowRect(hwnd, &mut rect).is_err() {
-            return LRESULT(HTCAPTION as isize);
-        }
-        let local_x = screen.0 - rect.left;
-        let local_y = screen.1 - rect.top;
-        let in_toolbar =
-            local_x >= 0 && local_x < rect.right - rect.left && local_y >= 0 && local_y < 34;
-        let locked = STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            let Some(state) = state.as_mut() else {
-                return false;
-            };
-            if state.toolbar_visible != in_toolbar {
-                state.toolbar_visible = in_toolbar;
-                InvalidateRect(Some(hwnd), None, false);
-            }
-            state.locked
-        });
-        if in_toolbar || locked {
-            LRESULT(HTCLIENT as isize)
-        } else {
-            LRESULT(HTCAPTION as isize)
-        }
+        invalidate_sticker_and_toolbar(hwnd);
     }
 
     unsafe fn toolbar_click(hwnd: HWND, point: (i32, i32)) {
@@ -318,7 +418,8 @@ mod platform {
             return;
         }
         let mut client = RECT::default();
-        if GetClientRect(hwnd, &mut client).is_err() {
+        let toolbar = toolbar_hwnd();
+        if toolbar.is_invalid() || GetClientRect(toolbar, &mut client).is_err() {
             return;
         }
         if point.0 >= client.right - 64 {
@@ -338,7 +439,72 @@ mod platform {
                 state.locked = !state.locked;
             }
         });
-        InvalidateRect(Some(hwnd), None, false);
+        invalidate_sticker_and_toolbar(hwnd);
+    }
+
+    unsafe fn position_toolbar(sticker: HWND) {
+        let toolbar = toolbar_hwnd();
+        if sticker.is_invalid() || toolbar.is_invalid() {
+            return;
+        }
+        let mut sticker_rect = RECT::default();
+        if GetWindowRect(sticker, &mut sticker_rect).is_err() {
+            return;
+        }
+        let virtual_left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let virtual_top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let virtual_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let virtual_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        let virtual_right = virtual_left + virtual_width;
+        let virtual_bottom = virtual_top + virtual_height;
+        let sticker_width = sticker_rect.right - sticker_rect.left;
+        let toolbar_width = sticker_width.max(360).min(virtual_width);
+        let toolbar_x = (sticker_rect.left + (sticker_width - toolbar_width) / 2)
+            .clamp(virtual_left, virtual_right - toolbar_width);
+        let toolbar_y = if sticker_rect.top - 38 >= virtual_top {
+            sticker_rect.top - 38
+        } else if sticker_rect.bottom + 38 <= virtual_bottom {
+            sticker_rect.bottom + 4
+        } else {
+            sticker_rect.top
+        };
+        let _ = SetWindowPos(
+            toolbar,
+            Some(HWND_TOPMOST),
+            toolbar_x,
+            toolbar_y,
+            toolbar_width,
+            34,
+            SWP_NOACTIVATE,
+        );
+    }
+
+    unsafe fn invalidate_sticker_and_toolbar(sticker: HWND) {
+        InvalidateRect(Some(sticker), None, false);
+        let toolbar = toolbar_hwnd();
+        if !toolbar.is_invalid() {
+            InvalidateRect(Some(toolbar), None, false);
+        }
+    }
+
+    fn sticker_hwnd() -> HWND {
+        STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|state| state.sticker_hwnd)
+                .unwrap_or_default()
+        })
+    }
+
+    fn toolbar_hwnd() -> HWND {
+        STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|state| state.toolbar_hwnd)
+                .unwrap_or_default()
+        })
     }
 
     unsafe fn draw_toolbar(

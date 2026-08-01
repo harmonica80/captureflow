@@ -109,7 +109,7 @@ function App() {
             <button className="capture-button primary" onClick={openSticker} disabled={openingSticker}>
               {openingSticker ? "正在建立…" : "建立置頂貼圖"}
             </button>
-            <span>頂端工具列 · 拖曳移動 · 游標中心縮放 · Ctrl + 滾輪透明度</span>
+            <span>自動定位工具列 · 拖曳移動 · 游標中心縮放 · Ctrl + 滾輪透明度</span>
           </div>
         </section>
       )}
