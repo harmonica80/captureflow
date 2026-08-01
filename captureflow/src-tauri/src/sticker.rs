@@ -92,13 +92,13 @@ mod platform {
                     GetClientRect, GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
                     GetWindowRect, KillTimer, PostQuitMessage, RegisterClassW, SetForegroundWindow,
                     SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos,
-                    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWL_EXSTYLE, HTCAPTION,
-                    HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXVIRTUALSCREEN,
-                    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
-                    SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONUP,
-                    WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST, WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP,
-                    WM_SIZE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-                    WS_EX_TRANSPARENT, WS_POPUP,
+                    ShowWindow, TranslateMessage, UpdateWindow, CS_HREDRAW, CS_VREDRAW,
+                    GWL_EXSTYLE, HTCAPTION, HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG,
+                    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+                    SWP_NOACTIVATE, SWP_NOCOPYBITS, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY,
+                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST,
+                    WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WNDCLASSW,
+                    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
                 },
             },
         },
@@ -273,6 +273,7 @@ mod platform {
                 paint(hwnd);
                 LRESULT(0)
             }
+            WM_ERASEBKGND => LRESULT(1),
             WM_NCHITTEST => {
                 let (locked, click_through) = STATE.with(|state| {
                     state
@@ -506,11 +507,14 @@ mod platform {
             new_y,
             new_width,
             new_height,
-            SWP_NOACTIVATE,
+            SWP_NOACTIVATE | SWP_NOCOPYBITS,
         );
-        position_toolbar(hwnd);
-        invalidate_sticker_and_toolbar(hwnd);
-        persist_current(hwnd);
+        InvalidateRect(Some(hwnd), None, false);
+        let _ = UpdateWindow(hwnd);
+        let toolbar = toolbar_hwnd();
+        if !toolbar.is_invalid() {
+            InvalidateRect(Some(toolbar), None, false);
+        }
     }
 
     unsafe fn adjust_opacity(hwnd: HWND, delta: i32) {
