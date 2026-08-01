@@ -50,14 +50,16 @@ mod platform {
                 Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_ESCAPE},
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, PostQuitMessage,
-                    RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos,
-                    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT,
-                    HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-                    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SW_SHOW, WINDOW_EX_STYLE,
-                    WM_DESTROY, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST,
-                    WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WS_EX_LAYERED,
-                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
+                    PostQuitMessage, RegisterClassW, SetForegroundWindow,
+                    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWL_EXSTYLE, HTCAPTION, HTCLIENT,
+                    HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXVIRTUALSCREEN,
+                    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
+                    SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL,
+                    WM_MOVE, WM_NCHITTEST, WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP, WM_SIZE,
+                    WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+                    WS_POPUP,
                 },
             },
         },
@@ -74,6 +76,7 @@ mod platform {
         bgra: Vec<u8>,
         opacity: u8,
         locked: bool,
+        click_through: bool,
         scale_percent: i32,
         sticker_hwnd: HWND,
         toolbar_hwnd: HWND,
@@ -87,6 +90,7 @@ mod platform {
                 bgra,
                 opacity: 255,
                 locked: false,
+                click_through: false,
                 scale_percent: 100,
                 sticker_hwnd: HWND::default(),
                 toolbar_hwnd: HWND::default(),
@@ -145,7 +149,7 @@ mod platform {
             WS_POPUP,
             x,
             y,
-            340,
+            380,
             40,
             Some(hwnd),
             None,
@@ -188,14 +192,16 @@ mod platform {
                 LRESULT(0)
             }
             WM_NCHITTEST => {
-                let locked = STATE.with(|state| {
+                let (locked, click_through) = STATE.with(|state| {
                     state
                         .borrow()
                         .as_ref()
-                        .map(|state| state.locked)
-                        .unwrap_or(false)
+                        .map(|state| (state.locked, state.click_through))
+                        .unwrap_or((false, false))
                 });
-                LRESULT(if locked {
+                LRESULT(if click_through {
+                    HTTRANSPARENT as isize
+                } else if locked {
                     HTCLIENT as isize
                 } else {
                     HTCAPTION as isize
@@ -220,6 +226,10 @@ mod platform {
             }
             WM_KEYDOWN if wparam.0 as u16 == b'L' as u16 => {
                 toggle_lock(hwnd);
+                LRESULT(0)
+            }
+            WM_KEYDOWN if wparam.0 as u16 == b'P' as u16 => {
+                toggle_click_through(hwnd);
                 LRESULT(0)
             }
             WM_RBUTTONUP | WM_NCRBUTTONUP => {
@@ -291,6 +301,13 @@ mod platform {
                 let sticker = sticker_hwnd();
                 if !sticker.is_invalid() {
                     toggle_lock(sticker);
+                }
+                LRESULT(0)
+            }
+            WM_KEYDOWN if wparam.0 as u16 == b'P' as u16 => {
+                let sticker = sticker_hwnd();
+                if !sticker.is_invalid() {
+                    toggle_click_through(sticker);
                 }
                 LRESULT(0)
             }
@@ -442,6 +459,8 @@ mod platform {
             adjust_opacity(hwnd, -16);
         } else if point.0 < 156 {
             adjust_opacity(hwnd, 16);
+        } else if point.0 < 208 {
+            toggle_click_through(hwnd);
         }
     }
 
@@ -451,6 +470,26 @@ mod platform {
                 state.locked = !state.locked;
             }
         });
+        invalidate_sticker_and_toolbar(hwnd);
+    }
+
+    unsafe fn toggle_click_through(hwnd: HWND) {
+        let enabled = STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(state) = state.as_mut() else {
+                return false;
+            };
+            state.click_through = !state.click_through;
+            state.click_through
+        });
+        let current_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let transparent = WS_EX_TRANSPARENT.0 as isize;
+        let next_style = if enabled {
+            current_style | transparent
+        } else {
+            current_style & !transparent
+        };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next_style);
         invalidate_sticker_and_toolbar(hwnd);
     }
 
@@ -470,7 +509,7 @@ mod platform {
         let virtual_right = virtual_left + virtual_width;
         let virtual_bottom = virtual_top + virtual_height;
         let sticker_width = sticker_rect.right - sticker_rect.left;
-        let toolbar_width = 340.min(virtual_width);
+        let toolbar_width = 380.min(virtual_width);
         let toolbar_x = (sticker_rect.left + (sticker_width - toolbar_width) / 2)
             .clamp(virtual_left, virtual_right - toolbar_width);
         let toolbar_y = if sticker_rect.top - 44 >= virtual_top {
@@ -542,7 +581,7 @@ mod platform {
         SelectObject(dc, old_pen);
         DeleteObject(border_pen.into());
 
-        draw_vector_icons(dc, width, state.locked);
+        draw_vector_icons(dc, width, state.locked, state.click_through);
 
         let old_font = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
         SetBkMode(dc, TRANSPARENT);
@@ -552,12 +591,16 @@ mod platform {
             state.scale_percent,
             (state.opacity as f64 / 255.0 * 100.0).round() as i32
         );
-        draw_text(dc, 188, 11, &status);
+        if state.click_through {
+            draw_text(dc, 218, 11, "穿透中");
+        } else {
+            draw_text(dc, 218, 11, &status);
+        }
         SelectObject(dc, old_font);
 
         let separator_pen = CreatePen(PS_SOLID, 1, COLORREF(0x00D0_CBC6));
         let old_pen = SelectObject(dc, separator_pen.into());
-        for x in [53, 105, 157, width - 49] {
+        for x in [53, 105, 157, 209, width - 49] {
             MoveToEx(dc, x, 8, None);
             LineTo(dc, x, 32);
         }
@@ -565,7 +608,12 @@ mod platform {
         DeleteObject(separator_pen.into());
     }
 
-    unsafe fn draw_vector_icons(dc: windows::Win32::Graphics::Gdi::HDC, width: i32, locked: bool) {
+    unsafe fn draw_vector_icons(
+        dc: windows::Win32::Graphics::Gdi::HDC,
+        width: i32,
+        locked: bool,
+        click_through: bool,
+    ) {
         let factory: ID2D1Factory = match D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)
         {
             Ok(factory) => factory,
@@ -687,17 +735,20 @@ mod platform {
             }
         }
 
-        target.DrawEllipse(
-            &D2D1_ELLIPSE {
-                point: Vector2 { X: 173.0, Y: 19.0 },
-                radiusX: 6.0,
-                radiusY: 6.0,
-            },
-            &brush,
-            1.6,
-            None,
-        );
-        line(177., 23., 183., 29.);
+        // Mouse pointer: toggles click-through while the separate toolbar stays usable.
+        for (x1, y1, x2, y2) in [
+            (169., 11., 169., 29.),
+            (169., 11., 183., 22.),
+            (183., 22., 176., 23.),
+            (176., 23., 180., 29.),
+            (176., 23., 169., 29.),
+        ] {
+            line(x1, y1, x2, y2);
+        }
+        if click_through {
+            line(165., 12., 185., 28.);
+            line(185., 12., 165., 28.);
+        }
         let close_x = (width - 25) as f32;
         line(close_x - 7., 13., close_x + 7., 27.);
         line(close_x + 7., 13., close_x - 7., 27.);
