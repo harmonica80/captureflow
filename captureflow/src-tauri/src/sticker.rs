@@ -119,6 +119,7 @@ mod platform {
         opacity: u8,
         locked: bool,
         click_through: bool,
+        scale: f64,
         scale_percent: i32,
         sticker_hwnd: HWND,
         toolbar_hwnd: HWND,
@@ -145,6 +146,7 @@ mod platform {
                 opacity: record.opacity,
                 locked: record.locked,
                 click_through: record.click_through,
+                scale: record.width as f64 / source_width.max(1) as f64,
                 scale_percent,
                 sticker_hwnd: HWND::default(),
                 toolbar_hwnd: HWND::default(),
@@ -292,11 +294,7 @@ mod platform {
                 if GetKeyState(VK_CONTROL.0 as i32) < 0 {
                     adjust_opacity(hwnd, delta.signum() * 16);
                 } else {
-                    resize(
-                        hwnd,
-                        if delta > 0 { 1.1 } else { 0.9 },
-                        screen_point(lparam),
-                    );
+                    resize(hwnd, delta, screen_point(lparam));
                 }
                 LRESULT(0)
             }
@@ -367,11 +365,7 @@ mod platform {
                     if GetKeyState(VK_CONTROL.0 as i32) < 0 {
                         adjust_opacity(sticker, delta.signum() * 16);
                     } else {
-                        resize(
-                            sticker,
-                            if delta > 0 { 1.1 } else { 0.9 },
-                            screen_point(lparam),
-                        );
+                        resize(sticker, delta, screen_point(lparam));
                     }
                 }
                 LRESULT(0)
@@ -470,7 +464,7 @@ mod platform {
         EndPaint(hwnd, &paint);
     }
 
-    unsafe fn resize(hwnd: HWND, factor: f64, cursor: (i32, i32)) {
+    unsafe fn resize(hwnd: HWND, wheel_delta: i32, cursor: (i32, i32)) {
         let mut rect = RECT::default();
         if GetWindowRect(hwnd, &mut rect).is_err() {
             return;
@@ -478,27 +472,33 @@ mod platform {
         let current_width = rect.right - rect.left;
         let current_height = rect.bottom - rect.top;
         let (new_width, new_height) = STATE.with(|state| {
-            let state = state.borrow();
-            let Some(state) = state.as_ref() else {
+            let mut state = state.borrow_mut();
+            let Some(state) = state.as_mut() else {
                 return (current_width, current_height);
             };
-            let current_scale = current_width as f64 / state.source_width as f64;
             let maximum_scale = (2400.0 / state.source_width as f64)
                 .min(1600.0 / state.source_height as f64)
                 .max(0.05);
             let minimum_scale = (80.0 / state.source_width as f64)
                 .max(60.0 / state.source_height as f64)
                 .min(maximum_scale);
-            let scale = (current_scale * factor).clamp(minimum_scale, maximum_scale);
+            // A standard wheel notch is 120. Use roughly 4% per notch and retain
+            // the floating-point scale so high-resolution wheels accumulate smoothly.
+            let factor = 2_f64.powf(wheel_delta as f64 / 2160.0);
+            state.scale = (state.scale * factor).clamp(minimum_scale, maximum_scale);
+            state.scale_percent = (state.scale * 100.0).round() as i32;
             (
-                (state.source_width as f64 * scale).round() as i32,
-                (state.source_height as f64 * scale).round() as i32,
+                (state.source_width as f64 * state.scale).round() as i32,
+                (state.source_height as f64 * state.scale).round() as i32,
             )
         });
-        let new_x = cursor.0
-            - ((cursor.0 - rect.left) as i64 * new_width as i64 / current_width as i64) as i32;
-        let new_y = cursor.1
-            - ((cursor.1 - rect.top) as i64 * new_height as i64 / current_height as i64) as i32;
+        if new_width == current_width && new_height == current_height {
+            return;
+        }
+        let anchor_x = (cursor.0 - rect.left) as f64 / current_width.max(1) as f64;
+        let anchor_y = (cursor.1 - rect.top) as f64 / current_height.max(1) as f64;
+        let new_x = (cursor.0 as f64 - anchor_x * new_width as f64).round() as i32;
+        let new_y = (cursor.1 as f64 - anchor_y * new_height as f64).round() as i32;
         let _ = SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
@@ -508,12 +508,6 @@ mod platform {
             new_height,
             SWP_NOACTIVATE,
         );
-        STATE.with(|state| {
-            if let Some(state) = state.borrow_mut().as_mut() {
-                state.scale_percent =
-                    (new_width as f64 / state.source_width as f64 * 100.0).round() as i32;
-            }
-        });
         position_toolbar(hwnd);
         invalidate_sticker_and_toolbar(hwnd);
         persist_current(hwnd);
