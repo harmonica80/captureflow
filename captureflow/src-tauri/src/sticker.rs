@@ -89,16 +89,16 @@ mod platform {
                 Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_ESCAPE},
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
-                    PostQuitMessage, RegisterClassW, SetForegroundWindow,
-                    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWL_EXSTYLE, HTCAPTION, HTCLIENT,
-                    HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXVIRTUALSCREEN,
+                    GetClientRect, GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
+                    GetWindowRect, KillTimer, PostQuitMessage, RegisterClassW, SetForegroundWindow,
+                    SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos,
+                    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWL_EXSTYLE, HTCAPTION,
+                    HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXVIRTUALSCREEN,
                     SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
-                    SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL,
-                    WM_MOVE, WM_NCHITTEST, WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP, WM_SIZE,
-                    WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
-                    WS_POPUP,
+                    SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONUP,
+                    WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST, WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP,
+                    WM_SIZE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+                    WS_EX_TRANSPARENT, WS_POPUP,
                 },
             },
         },
@@ -122,6 +122,7 @@ mod platform {
         scale_percent: i32,
         sticker_hwnd: HWND,
         toolbar_hwnd: HWND,
+        toolbar_visible: bool,
     }
 
     pub fn run(
@@ -147,6 +148,7 @@ mod platform {
                 scale_percent,
                 sticker_hwnd: HWND::default(),
                 toolbar_hwnd: HWND::default(),
+                toolbar_visible: false,
             });
         });
         let _ = unsafe { run_window(record.x, record.y, record.width, record.height) };
@@ -241,8 +243,9 @@ mod platform {
         }
         persist_current(hwnd);
         ShowWindow(hwnd, SW_SHOW);
-        ShowWindow(toolbar_hwnd, SW_SHOW);
+        ShowWindow(toolbar_hwnd, SW_HIDE);
         position_toolbar(hwnd);
+        SetTimer(Some(hwnd), 1, 80, None);
         SetForegroundWindow(hwnd);
 
         let mut message = MSG::default();
@@ -318,7 +321,12 @@ mod platform {
                 persist_current(hwnd);
                 LRESULT(0)
             }
+            WM_TIMER if wparam.0 == 1 => {
+                update_toolbar_visibility(hwnd);
+                LRESULT(0)
+            }
             WM_DESTROY => {
+                KillTimer(Some(hwnd), 1);
                 STATE.with(|state| {
                     if let Some(state) = state.borrow().as_ref() {
                         if !state.toolbar_hwnd.is_invalid() {
@@ -649,6 +657,48 @@ mod platform {
             40,
             SWP_NOACTIVATE,
         );
+    }
+
+    unsafe fn update_toolbar_visibility(sticker: HWND) {
+        let toolbar = toolbar_hwnd();
+        if sticker.is_invalid() || toolbar.is_invalid() {
+            return;
+        }
+        let mut cursor = Default::default();
+        let mut sticker_rect = RECT::default();
+        let mut toolbar_rect = RECT::default();
+        if GetCursorPos(&mut cursor).is_err()
+            || GetWindowRect(sticker, &mut sticker_rect).is_err()
+            || GetWindowRect(toolbar, &mut toolbar_rect).is_err()
+        {
+            return;
+        }
+        let over_sticker = cursor.x >= sticker_rect.left
+            && cursor.x < sticker_rect.right
+            && cursor.y >= sticker_rect.top
+            && cursor.y < sticker_rect.bottom;
+        // Bridge the narrow gap between the image and toolbar so it does not flash
+        // while the pointer moves from one window to the other.
+        let over_toolbar = cursor.x >= toolbar_rect.left - 6
+            && cursor.x < toolbar_rect.right + 6
+            && cursor.y >= toolbar_rect.top - 6
+            && cursor.y < toolbar_rect.bottom + 6;
+        let should_show = over_sticker || over_toolbar;
+        let changed = STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(state) = state.as_mut() else {
+                return false;
+            };
+            if state.toolbar_visible == should_show {
+                false
+            } else {
+                state.toolbar_visible = should_show;
+                true
+            }
+        });
+        if changed {
+            ShowWindow(toolbar, if should_show { SW_SHOW } else { SW_HIDE });
+        }
     }
 
     unsafe fn invalidate_sticker_and_toolbar(sticker: HWND) {
