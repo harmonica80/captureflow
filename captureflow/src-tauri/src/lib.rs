@@ -1,4 +1,5 @@
 mod capture;
+mod diagnostics;
 mod selector;
 mod sticker;
 mod sticker_store;
@@ -21,6 +22,13 @@ fn open_sticker(app: tauri::AppHandle, image_path: String, x: i32, y: i32) -> Re
     sticker::open(&app, image_path, x, y)
 }
 
+#[tauri::command]
+async fn run_capability_diagnostics() -> Result<diagnostics::CapabilityReport, String> {
+    tauri::async_runtime::spawn_blocking(diagnostics::run)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -32,7 +40,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             capture_virtual_desktop,
             select_screen_area,
-            open_sticker
+            open_sticker,
+            run_capability_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -28,6 +28,9 @@ windows-numerics = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
   "Foundation_Numerics",
+  "Globalization",
+  "Graphics_Capture",
+  "Media_Ocr",
   "Win32_Foundation",
   "Win32_Graphics_Direct2D",
   "Win32_Graphics_Direct2D_Common",

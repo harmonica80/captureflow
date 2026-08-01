@@ -42,6 +42,13 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .selection-coordinates { color: #b6c9bf; }
 .sticker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 20px; }
 .sticker-actions span { color: #91a39a; font-size: 13px; }
+.capability-result { border-color: #5688a6; }
+.capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+.capability-grid div { display: flex; justify-content: space-between; gap: 16px; padding: 12px 14px; border-radius: 10px; background: #10231c; }
+.capability-grid b { color: #d5e5dd; }
+.capability-grid span { color: #b8dcca; font-weight: 700; }
+.language-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.language-list span { padding: 7px 10px; border: 1px solid #315444; border-radius: 999px; color: #c9f7df; background: #142a21; font-size: 12px; }
 
 .roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: clamp(54px, 9vw, 110px); }
 .roadmap article { min-height: 190px; padding: 24px; border: 1px solid #21352d; border-radius: 20px; background: rgba(13, 29, 24, .72); }
@@ -56,4 +63,5 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
   .roadmap h2 { margin-top: 20px; }
   .result-heading { align-items: flex-start; flex-direction: column; }
   .monitor-list div { grid-template-columns: 1fr; }
+  .capability-grid { grid-template-columns: 1fr; }
 }

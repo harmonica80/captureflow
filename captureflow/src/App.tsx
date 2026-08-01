@@ -24,6 +24,17 @@ type SelectionSnapshot = {
   width: number;
   height: number;
 };
+type CapabilityReport = {
+  windowsGraphicsCapture: boolean;
+  windowsOcr: boolean;
+  traditionalChineseOcr: boolean;
+  englishOcr: boolean;
+  ocrMaxImageDimension: number;
+  ocrLanguages: { languageTag: string; displayName: string }[];
+  recordingPath: string;
+  mp4Encoder: string;
+  gifEncoder: string;
+};
 
 function App() {
   const [running, setRunning] = useState(false);
@@ -32,6 +43,8 @@ function App() {
   const [selecting, setSelecting] = useState(false);
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
   const [openingSticker, setOpeningSticker] = useState(false);
+  const [checkingCapabilities, setCheckingCapabilities] = useState(false);
+  const [capabilities, setCapabilities] = useState<CapabilityReport | null>(null);
 
   async function runPoc() {
     setRunning(true);
@@ -75,6 +88,18 @@ function App() {
     }
   }
 
+  async function runDiagnostics() {
+    setCheckingCapabilities(true);
+    setError("");
+    try {
+      setCapabilities(await invoke<CapabilityReport>("run_capability_diagnostics"));
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setCheckingCapabilities(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -91,8 +116,34 @@ function App() {
           <button className="capture-button" onClick={runPoc} disabled={running}>
             {running ? "正在擷取…" : "執行完整桌面快照"}
           </button>
+          <button className="capture-button" onClick={runDiagnostics} disabled={checkingCapabilities}>
+            {checkingCapabilities ? "檢查中…" : "檢查錄影與 OCR 能力"}
+          </button>
         </div>
       </section>
+
+      {capabilities && (
+        <section className="result-panel capability-result" aria-live="polite">
+          <div className="result-heading">
+            <div><span>POC-D CAPABILITY REPORT</span><h2>錄影與 OCR 環境檢查</h2></div>
+            <strong>{capabilities.windowsGraphicsCapture ? "可用" : "不可用"}</strong>
+          </div>
+          <div className="capability-grid">
+            <div><b>Windows Graphics Capture</b><span>{capabilities.windowsGraphicsCapture ? "支援" : "不支援"}</span></div>
+            <div><b>繁體中文 OCR</b><span>{capabilities.traditionalChineseOcr ? "已安裝" : "未安裝"}</span></div>
+            <div><b>英文 OCR</b><span>{capabilities.englishOcr ? "已安裝" : "未安裝"}</span></div>
+            <div><b>OCR 最大圖片邊長</b><span>{capabilities.ocrMaxImageDimension}px</span></div>
+          </div>
+          <p className="path"><b>擷取</b>{capabilities.recordingPath}</p>
+          <p className="path"><b>MP4</b>{capabilities.mp4Encoder}</p>
+          <p className="path"><b>GIF</b>{capabilities.gifEncoder}</p>
+          <div className="language-list" aria-label="已安裝 OCR 語言">
+            {capabilities.ocrLanguages.map((language) => (
+              <span key={language.languageTag}>{language.displayName} · {language.languageTag}</span>
+            ))}
+          </div>
+        </section>
+      )}
 
       {selection && (
         <section className="result-panel selection-result" aria-live="polite">
