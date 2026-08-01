@@ -20,6 +20,8 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .hero p { max-width: 660px; color: #aebdb6; font-size: 18px; line-height: 1.75; }
 .status { display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; padding: 10px 14px; border: 1px solid #27483a; border-radius: 999px; color: #c9f7df; background: rgba(18, 53, 39, .55); font-size: 14px; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: #67e6a6; box-shadow: 0 0 14px #67e6a6; }
+.shortcut-hint { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 14px 0 0; color: #c3d2ca; font-size: 14px; }
+.shortcut-hint kbd { padding: 4px 8px; border: 1px solid #537466; border-bottom-width: 2px; border-radius: 6px; color: #f4f7f5; background: #142a21; font: 700 12px/1 "Segoe UI", sans-serif; }
 .action-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .capture-button { display: block; padding: 13px 18px; border: 1px solid #315444; border-radius: 12px; color: #c9f7df; background: #142a21; font: inherit; font-weight: 750; cursor: pointer; }
 .capture-button.primary { border-color: transparent; color: #062217; background: #74e7ad; }

@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::{fs, path::PathBuf, time::SystemTime};
 use tauri::{AppHandle, Manager};
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectionSnapshot {
     pub image_path: String,

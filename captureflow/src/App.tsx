@@ -1,6 +1,7 @@
 import "./App.css";
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
 
 type RectInfo = { x: number; y: number; width: number; height: number };
 type MonitorInfo = {
@@ -45,6 +46,20 @@ function App() {
   const [openingSticker, setOpeningSticker] = useState(false);
   const [checkingCapabilities, setCheckingCapabilities] = useState(false);
   const [capabilities, setCapabilities] = useState<CapabilityReport | null>(null);
+
+  useEffect(() => {
+    const stopSelection = listen<SelectionSnapshot>("captureflow://selection-complete", (event) => {
+      setSelection(event.payload);
+      setError("");
+    });
+    const stopError = listen<string>("captureflow://selection-error", (event) => {
+      setError(event.payload);
+    });
+    return () => {
+      void stopSelection.then((unlisten) => unlisten());
+      void stopError.then((unlisten) => unlisten());
+    };
+  }, []);
 
   async function runPoc() {
     setRunning(true);
@@ -109,6 +124,7 @@ function App() {
           Windows 本機優先的螢幕截取、物件式標註、置頂貼圖與視覺工作流工具。
         </p>
         <div className="status"><i />PoC-C：原生置頂貼圖</div>
+        <p className="shortcut-hint"><kbd>Alt</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>A</kbd> 可在任何程式中開始框選截圖</p>
         <div className="action-row">
           <button className="capture-button primary" onClick={runSelector} disabled={selecting}>
             {selecting ? "選取模式執行中…" : "開始框選螢幕範圍"}
