@@ -122,6 +122,9 @@ mod platform {
         click_through: bool,
         scale: f64,
         scale_percent: i32,
+        pending_wheel_delta: i32,
+        pending_wheel_cursor: (i32, i32),
+        resize_scheduled: bool,
         sticker_hwnd: HWND,
         toolbar_hwnd: HWND,
         toolbar_visible: bool,
@@ -149,6 +152,9 @@ mod platform {
                 click_through: record.click_through,
                 scale: record.width as f64 / source_width.max(1) as f64,
                 scale_percent,
+                pending_wheel_delta: 0,
+                pending_wheel_cursor: (record.x, record.y),
+                resize_scheduled: false,
                 sticker_hwnd: HWND::default(),
                 toolbar_hwnd: HWND::default(),
                 toolbar_visible: false,
@@ -295,7 +301,7 @@ mod platform {
                 if GetKeyState(VK_CONTROL.0 as i32) < 0 {
                     adjust_opacity(hwnd, delta.signum() * 16);
                 } else {
-                    resize(hwnd, delta, screen_point(lparam));
+                    queue_resize(hwnd, delta, screen_point(lparam));
                 }
                 LRESULT(0)
             }
@@ -324,8 +330,13 @@ mod platform {
                 update_toolbar_visibility(hwnd);
                 LRESULT(0)
             }
+            WM_TIMER if wparam.0 == 2 => {
+                apply_queued_resize(hwnd);
+                LRESULT(0)
+            }
             WM_DESTROY => {
                 KillTimer(Some(hwnd), 1);
+                KillTimer(Some(hwnd), 2);
                 STATE.with(|state| {
                     if let Some(state) = state.borrow().as_ref() {
                         if !state.toolbar_hwnd.is_invalid() {
@@ -366,7 +377,7 @@ mod platform {
                     if GetKeyState(VK_CONTROL.0 as i32) < 0 {
                         adjust_opacity(sticker, delta.signum() * 16);
                     } else {
-                        resize(sticker, delta, screen_point(lparam));
+                        queue_resize(sticker, delta, screen_point(lparam));
                     }
                 }
                 LRESULT(0)
@@ -518,6 +529,45 @@ mod platform {
         let toolbar = toolbar_hwnd();
         if !toolbar.is_invalid() {
             InvalidateRect(Some(toolbar), None, false);
+        }
+    }
+
+    unsafe fn queue_resize(hwnd: HWND, wheel_delta: i32, cursor: (i32, i32)) {
+        let schedule = STATE.with(|state| {
+            if let Some(state) = state.borrow_mut().as_mut() {
+                state.pending_wheel_delta = state
+                    .pending_wheel_delta
+                    .saturating_add(wheel_delta)
+                    .clamp(-960, 960);
+                state.pending_wheel_cursor = cursor;
+                if !state.resize_scheduled {
+                    state.resize_scheduled = true;
+                    return true;
+                }
+            }
+            false
+        });
+        // Coalesce wheel bursts so the native window is resized at most once per
+        // compositor frame. The accumulated delta preserves the requested scale.
+        if schedule {
+            SetTimer(Some(hwnd), 2, 16, None);
+        }
+    }
+
+    unsafe fn apply_queued_resize(hwnd: HWND) {
+        KillTimer(Some(hwnd), 2);
+        let (delta, cursor) = STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(state) = state.as_mut() else {
+                return (0, (0, 0));
+            };
+            let pending = state.pending_wheel_delta;
+            state.pending_wheel_delta = 0;
+            state.resize_scheduled = false;
+            (pending, state.pending_wheel_cursor)
+        });
+        if delta != 0 {
+            resize(hwnd, delta, cursor);
         }
     }
 
