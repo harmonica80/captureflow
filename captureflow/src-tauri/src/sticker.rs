@@ -28,10 +28,11 @@ mod platform {
         Win32::{
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
             Graphics::Gdi::{
-                BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject,
-                InvalidateRect, Rectangle, SelectObject, SetBkMode, SetTextColor, StretchDIBits,
-                TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH,
-                PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+                BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
+                GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, SelectObject,
+                SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
+                BI_RGB, DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID,
+                SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -133,8 +134,8 @@ mod platform {
             WS_POPUP,
             x,
             y,
-            width.max(360),
-            34,
+            340,
+            40,
             Some(hwnd),
             None,
             Some(instance),
@@ -414,7 +415,7 @@ mod platform {
     }
 
     unsafe fn toolbar_click(hwnd: HWND, point: (i32, i32)) {
-        if point.1 >= 34 {
+        if point.1 >= 40 {
             return;
         }
         let mut client = RECT::default();
@@ -422,13 +423,13 @@ mod platform {
         if toolbar.is_invalid() || GetClientRect(toolbar, &mut client).is_err() {
             return;
         }
-        if point.0 >= client.right - 64 {
+        if point.0 >= client.right - 48 {
             let _ = DestroyWindow(hwnd);
-        } else if point.0 < 76 {
+        } else if point.0 < 52 {
             toggle_lock(hwnd);
-        } else if point.0 < 146 {
+        } else if point.0 < 104 {
             adjust_opacity(hwnd, -16);
-        } else if point.0 < 216 {
+        } else if point.0 < 156 {
             adjust_opacity(hwnd, 16);
         }
     }
@@ -458,12 +459,12 @@ mod platform {
         let virtual_right = virtual_left + virtual_width;
         let virtual_bottom = virtual_top + virtual_height;
         let sticker_width = sticker_rect.right - sticker_rect.left;
-        let toolbar_width = sticker_width.max(360).min(virtual_width);
+        let toolbar_width = 340.min(virtual_width);
         let toolbar_x = (sticker_rect.left + (sticker_width - toolbar_width) / 2)
             .clamp(virtual_left, virtual_right - toolbar_width);
-        let toolbar_y = if sticker_rect.top - 38 >= virtual_top {
-            sticker_rect.top - 38
-        } else if sticker_rect.bottom + 38 <= virtual_bottom {
+        let toolbar_y = if sticker_rect.top - 44 >= virtual_top {
+            sticker_rect.top - 44
+        } else if sticker_rect.bottom + 44 <= virtual_bottom {
             sticker_rect.bottom + 4
         } else {
             sticker_rect.top
@@ -474,7 +475,7 @@ mod platform {
             toolbar_x,
             toolbar_y,
             toolbar_width,
-            34,
+            40,
             SWP_NOACTIVATE,
         );
     }
@@ -512,35 +513,47 @@ mod platform {
         width: i32,
         state: &StickerState,
     ) {
-        let toolbar_brush = CreateSolidBrush(COLORREF(0x0020_1A16));
-        let old_brush = SelectObject(dc, toolbar_brush.into());
-        let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Rectangle(dc, 0, 0, width, 34);
-        SelectObject(dc, old_pen);
-        SelectObject(dc, old_brush);
+        let toolbar_brush = CreateSolidBrush(COLORREF(0x00F7_F6F5));
+        let toolbar_rect = RECT {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: 40,
+        };
+        FillRect(dc, &toolbar_rect, toolbar_brush);
         DeleteObject(toolbar_brush.into());
 
+        let border_pen = CreatePen(PS_SOLID, 2, COLORREF(0x00E8_8830));
+        let old_pen = SelectObject(dc, border_pen.into());
+        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(dc, 1, 1, width - 1, 39);
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(border_pen.into());
+
+        let old_font = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, COLORREF(0x00AD_E774));
-        draw_text(
-            dc,
-            10,
-            8,
-            if state.locked {
-                "已鎖定"
-            } else {
-                "可移動"
-            },
-        );
-        draw_text(dc, 88, 8, "透明−");
-        draw_text(dc, 158, 8, "透明+");
+        SetTextColor(dc, COLORREF(0x0031_2A24));
+        draw_text(dc, 18, 10, if state.locked { "鎖" } else { "↔" });
+        draw_text(dc, 68, 10, "α−");
+        draw_text(dc, 120, 10, "α+");
         let status = format!(
-            "{}% · α{}%",
+            "{}%  α{}%",
             state.scale_percent,
             (state.opacity as f64 / 255.0 * 100.0).round() as i32
         );
-        draw_text(dc, 230, 8, &status);
-        draw_text(dc, (width - 48).max(230), 8, "關閉");
+        draw_text(dc, 178, 10, &status);
+        draw_text(dc, width - 31, 10, "×");
+        SelectObject(dc, old_font);
+
+        let separator_pen = CreatePen(PS_SOLID, 1, COLORREF(0x00D0_CBC6));
+        let old_pen = SelectObject(dc, separator_pen.into());
+        for x in [53, 105, 157, width - 49] {
+            MoveToEx(dc, x, 8, None);
+            LineTo(dc, x, 32);
+        }
+        SelectObject(dc, old_pen);
+        DeleteObject(separator_pen.into());
     }
 
     unsafe fn draw_text(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32, text: &str) {
