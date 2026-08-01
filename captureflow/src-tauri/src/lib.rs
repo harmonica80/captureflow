@@ -1,6 +1,7 @@
 mod capture;
 mod diagnostics;
 mod selector;
+mod settings;
 mod sticker;
 mod sticker_store;
 use tauri::{Emitter, Manager};
@@ -90,6 +91,24 @@ async fn run_capability_diagnostics() -> Result<diagnostics::CapabilityReport, S
         .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+fn get_settings(app: tauri::AppHandle) -> Result<settings::SettingsView, String> {
+    settings::view(&app)
+}
+
+#[tauri::command]
+fn update_capture_shortcut(
+    app: tauri::AppHandle,
+    shortcut: String,
+) -> Result<settings::SettingsView, String> {
+    settings::update_shortcut(&app, shortcut)
+}
+
+#[tauri::command]
+fn record_client_error(app: tauri::AppHandle, context: String, message: String) {
+    settings::append_error(&app, &context, &message);
+}
+
 fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -107,6 +126,7 @@ fn launch_selection(app: tauri::AppHandle) {
             }
             Ok(None) => {}
             Err(error) => {
+                settings::append_error(&app, "selection.global_shortcut", &error);
                 focus_main_window(&app);
                 let _ = app.emit("captureflow://selection-error", error);
             }
@@ -117,6 +137,7 @@ fn launch_selection(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(settings::SettingsState::default())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
         }))
@@ -134,9 +155,10 @@ pub fn run() {
         )
         .setup(|app| {
             sticker::restore(app.handle());
-            app.global_shortcut().register("Alt+Shift+A")?;
+            settings::initialize(app.handle())?;
+            let shortcut = settings::view(app.handle())?.capture_shortcut;
             tauri::tray::TrayIconBuilder::new()
-                .tooltip("CaptureFlow · Alt+Shift+A 開始截圖")
+                .tooltip(format!("CaptureFlow · {shortcut} 開始截圖"))
                 .icon(
                     app.default_window_icon()
                         .ok_or("missing application icon")?
@@ -163,7 +185,10 @@ pub fn run() {
             capture_monitor,
             open_sticker,
             export_selection,
-            run_capability_diagnostics
+            run_capability_diagnostics,
+            get_settings,
+            update_capture_shortcut,
+            record_client_error
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -39,6 +39,11 @@ type CapabilityReport = {
   mp4Encoder: string;
   gifEncoder: string;
 };
+type SettingsView = {
+  captureShortcut: string;
+  defaultShortcut: string;
+  logPath: string;
+};
 
 function App() {
   const [running, setRunning] = useState(false);
@@ -54,6 +59,11 @@ function App() {
   const [capabilities, setCapabilities] = useState<CapabilityReport | null>(null);
   const [outputStatus, setOutputStatus] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [settings, setSettings] = useState<SettingsView | null>(null);
+  const [shortcutDraft, setShortcutDraft] = useState("");
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState("");
+  const [settingsError, setSettingsError] = useState("");
 
   useEffect(() => {
     const stopSelection = listen<SelectionSnapshot>("captureflow://selection-complete", (event) => {
@@ -67,6 +77,15 @@ function App() {
       void stopSelection.then((unlisten) => unlisten());
       void stopError.then((unlisten) => unlisten());
     };
+  }, []);
+
+  useEffect(() => {
+    void invoke<SettingsView>("get_settings")
+      .then((loaded) => {
+        setSettings(loaded);
+        setShortcutDraft(loaded.captureShortcut);
+      })
+      .catch((reason) => setError(String(reason)));
   }, []);
 
   useEffect(() => {
@@ -201,6 +220,24 @@ function App() {
     }
   }
 
+  async function applyShortcut(shortcut: string) {
+    setSavingSettings(true);
+    setSettingsMessage("");
+    setSettingsError("");
+    try {
+      const updated = await invoke<SettingsView>("update_capture_shortcut", { shortcut });
+      setSettings(updated);
+      setShortcutDraft(updated.captureShortcut);
+      setSettingsMessage(`快捷鍵已更新為 ${updated.captureShortcut}`);
+    } catch (reason) {
+      const message = String(reason);
+      setSettingsError(message);
+      void invoke("record_client_error", { context: "settings.ui", message });
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -210,7 +247,14 @@ function App() {
           Windows 本機優先的螢幕截取、物件式標註、置頂貼圖與視覺工作流工具。
         </p>
         <div className="status"><i />PoC-C：原生置頂貼圖</div>
-        <p className="shortcut-hint"><kbd>Alt</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>A</kbd> 可在任何程式中開始框選截圖</p>
+        <p className="shortcut-hint">
+          {(settings?.captureShortcut ?? "Alt+Shift+A").split("+").map((key, index) => (
+            <span className="shortcut-key" key={`${key}-${index}`}>
+              {index > 0 && <span>+</span>}<kbd>{key}</kbd>
+            </span>
+          ))}
+          可在任何程式中開始框選截圖
+        </p>
         <div className="action-row">
           <button className="capture-button primary" onClick={runSelector} disabled={selecting}>
             {selecting ? "選取模式執行中…" : "開始框選螢幕範圍"}
@@ -242,6 +286,36 @@ function App() {
           </div>
         )}
       </section>
+
+      {settings && (
+        <section className="result-panel settings-panel" aria-labelledby="settings-title">
+          <div className="result-heading">
+            <div><span>SETTINGS</span><h2 id="settings-title">快捷鍵與錯誤記錄</h2></div>
+            <strong>{settings.captureShortcut}</strong>
+          </div>
+          <label htmlFor="capture-shortcut">全域框選快捷鍵</label>
+          <div className="settings-controls">
+            <input
+              id="capture-shortcut"
+              value={shortcutDraft}
+              onChange={(event) => setShortcutDraft(event.target.value)}
+              placeholder="例如 Alt+Shift+A"
+              spellCheck={false}
+              disabled={savingSettings}
+            />
+            <button className="capture-button primary" onClick={() => applyShortcut(shortcutDraft)} disabled={savingSettings}>
+              {savingSettings ? "套用中…" : "套用快捷鍵"}
+            </button>
+            <button className="capture-button" onClick={() => applyShortcut(settings.defaultShortcut)} disabled={savingSettings}>
+              恢復預設
+            </button>
+          </div>
+          <p className="settings-help">使用 Ctrl、Alt、Shift、Super 搭配英文字母或功能鍵；若被其他程式占用，會保留目前快捷鍵。</p>
+          <p className="path"><b>LOG</b>{settings.logPath}</p>
+          {settingsMessage && <p className="settings-success" role="status">✓ {settingsMessage}</p>}
+          {settingsError && <p className="settings-error" role="alert">錯誤：{settingsError}</p>}
+        </section>
+      )}
 
       {capabilities && (
         <section className="result-panel capability-result" aria-live="polite">
