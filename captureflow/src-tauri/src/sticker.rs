@@ -77,10 +77,11 @@ mod platform {
                 Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
                 Gdi::{
                     BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
-                    GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, SelectObject,
-                    SetBkMode, SetTextColor, StretchDIBits, TextOutW, UpdateWindow, BITMAPINFO,
+                    GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, RedrawWindow,
+                    SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
                     BITMAPINFOHEADER, BI_RGB, DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH,
-                    PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+                    PAINTSTRUCT, PS_SOLID, RDW_INVALIDATE, RDW_NOERASE, RDW_UPDATENOW, SRCCOPY,
+                    TRANSPARENT,
                 },
             },
             System::LibraryLoader::GetModuleHandleW,
@@ -94,11 +95,11 @@ mod platform {
                     SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos,
                     ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWL_EXSTYLE, HTCAPTION,
                     HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXVIRTUALSCREEN,
-                    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
-                    SWP_NOCOPYBITS, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_ERASEBKGND,
-                    WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST, WM_NCRBUTTONUP,
-                    WM_PAINT, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
-                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+                    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_DEFERERASE,
+                    SWP_NOACTIVATE, SWP_NOCOPYBITS, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY,
+                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST,
+                    WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WNDCLASSW,
+                    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
                 },
             },
         },
@@ -176,7 +177,6 @@ mod platform {
         let instance = HINSTANCE(module.0);
         let class_name = w!("CaptureFlowStickerWindow");
         let window_class = WNDCLASSW {
-            style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
             lpszClassName: class_name,
@@ -507,10 +507,14 @@ mod platform {
             new_y,
             new_width,
             new_height,
-            SWP_NOACTIVATE | SWP_NOCOPYBITS,
+            SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_DEFERERASE,
         );
-        InvalidateRect(Some(hwnd), None, false);
-        let _ = UpdateWindow(hwnd);
+        RedrawWindow(
+            Some(hwnd),
+            None,
+            None,
+            RDW_INVALIDATE | RDW_NOERASE | RDW_UPDATENOW,
+        );
         let toolbar = toolbar_hwnd();
         if !toolbar.is_invalid() {
             InvalidateRect(Some(toolbar), None, false);
