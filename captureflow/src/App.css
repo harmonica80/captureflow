@@ -44,6 +44,7 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .selection-coordinates { color: #b6c9bf; }
 .sticker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 20px; }
 .sticker-actions span { color: #91a39a; font-size: 13px; }
+.output-status { margin: 14px 0 0; color: #c9f7df; font-size: 14px; overflow-wrap: anywhere; }
 .capability-result { border-color: #5688a6; }
 .capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
 .capability-grid div { display: flex; justify-content: space-between; gap: 16px; padding: 12px 14px; border-radius: 10px; background: #10231c; }

@@ -24,6 +24,42 @@ fn open_sticker(app: tauri::AppHandle, image_path: String, x: i32, y: i32) -> Re
 }
 
 #[tauri::command]
+fn export_selection(
+    app: tauri::AppHandle,
+    image_path: String,
+    destination: String,
+) -> Result<(), String> {
+    use std::path::Path;
+
+    let source =
+        std::fs::canonicalize(&image_path).map_err(|error| format!("無法讀取截圖來源：{error}"))?;
+    let app_data = std::fs::canonicalize(
+        app.path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("無法讀取應用程式資料目錄：{error}"))?;
+    if !source.starts_with(&app_data) {
+        return Err("只能匯出 CaptureFlow 產生的截圖。".into());
+    }
+    let format = match Path::new(&destination)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => image::ImageFormat::Png,
+        Some("jpg" | "jpeg") => image::ImageFormat::Jpeg,
+        Some("webp") => image::ImageFormat::WebP,
+        _ => return Err("請使用 .png、.jpg、.jpeg 或 .webp 副檔名。".into()),
+    };
+    image::open(source)
+        .map_err(|error| format!("無法解碼截圖：{error}"))?
+        .save_with_format(destination, format)
+        .map_err(|error| format!("無法儲存圖片：{error}"))
+}
+
+#[tauri::command]
 async fn run_capability_diagnostics() -> Result<diagnostics::CapabilityReport, String> {
     tauri::async_runtime::spawn_blocking(diagnostics::run)
         .await
@@ -61,6 +97,8 @@ pub fn run() {
             focus_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -97,6 +135,7 @@ pub fn run() {
             capture_virtual_desktop,
             select_screen_area,
             open_sticker,
+            export_selection,
             run_capability_diagnostics
         ])
         .run(tauri::generate_context!())

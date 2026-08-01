@@ -1,6 +1,8 @@
 import "./App.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 
 type RectInfo = { x: number; y: number; width: number; height: number };
@@ -46,6 +48,8 @@ function App() {
   const [openingSticker, setOpeningSticker] = useState(false);
   const [checkingCapabilities, setCheckingCapabilities] = useState(false);
   const [capabilities, setCapabilities] = useState<CapabilityReport | null>(null);
+  const [outputStatus, setOutputStatus] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const stopSelection = listen<SelectionSnapshot>("captureflow://selection-complete", (event) => {
@@ -115,6 +119,45 @@ function App() {
     }
   }
 
+  async function copySelection() {
+    if (!selection) return;
+    setError("");
+    setOutputStatus("");
+    try {
+      await writeImage(selection.imagePath);
+      setOutputStatus("已複製圖片到剪貼簿");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function saveSelection() {
+    if (!selection) return;
+    setExporting(true);
+    setError("");
+    setOutputStatus("");
+    try {
+      const originalName = selection.imagePath.split(/[\\/]/).pop() ?? "CaptureFlow.png";
+      const destination = await save({
+        title: "儲存 CaptureFlow 截圖",
+        defaultPath: originalName,
+        filters: [
+          { name: "PNG 圖片", extensions: ["png"] },
+          { name: "JPEG 圖片", extensions: ["jpg", "jpeg"] },
+          { name: "WebP 圖片", extensions: ["webp"] },
+        ],
+      });
+      if (destination) {
+        await invoke("export_selection", { imagePath: selection.imagePath, destination });
+        setOutputStatus(`已儲存：${destination}`);
+      }
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -173,11 +216,16 @@ function App() {
           <p className="path"><b>PNG</b>{selection.imagePath}</p>
           <p className="path"><b>JSON</b>{selection.metadataPath}</p>
           <div className="sticker-actions">
+            <button className="capture-button primary" onClick={copySelection}>複製圖片</button>
+            <button className="capture-button" onClick={saveSelection} disabled={exporting}>
+              {exporting ? "儲存中…" : "另存 PNG / JPEG / WebP"}
+            </button>
             <button className="capture-button primary" onClick={openSticker} disabled={openingSticker}>
               {openingSticker ? "正在建立…" : "建立置頂貼圖"}
             </button>
             <span>自動定位工具列 · 拖曳移動 · 游標中心縮放 · Ctrl + 滾輪透明度</span>
           </div>
+          {outputStatus && <p className="output-status" role="status">{outputStatus}</p>}
         </section>
       )}
 
