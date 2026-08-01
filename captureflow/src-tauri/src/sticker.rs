@@ -28,9 +28,10 @@ mod platform {
         Win32::{
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
             Graphics::Gdi::{
-                BeginPaint, CreatePen, DeleteObject, EndPaint, GetStockObject, Rectangle,
-                SelectObject, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
-                NULL_BRUSH, PAINTSTRUCT, PS_SOLID, SRCCOPY,
+                BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject,
+                Rectangle, SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW,
+                BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT,
+                PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -38,13 +39,13 @@ mod platform {
                 Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_ESCAPE},
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                    GetClientRect, GetMessageW, GetWindowRect, PostQuitMessage, RegisterClassW,
-                    SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HWND_TOPMOST, LWA_ALPHA,
-                    MSG, SWP_NOACTIVATE, SWP_NOMOVE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY,
-                    WM_KEYDOWN, WM_MOUSEWHEEL, WM_NCHITTEST, WM_NCRBUTTONUP, WM_PAINT,
-                    WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-                    WS_POPUP,
+                    GetClientRect, GetMessageW, GetWindowRect, InvalidateRect, PostQuitMessage,
+                    RegisterClassW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowPos,
+                    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT,
+                    HWND_TOPMOST, LWA_ALPHA, MSG, SWP_NOACTIVATE, SW_SHOW, WINDOW_EX_STYLE,
+                    WM_DESTROY, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_NCHITTEST,
+                    WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED,
+                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -59,6 +60,9 @@ mod platform {
         source_height: i32,
         bgra: Vec<u8>,
         opacity: u8,
+        locked: bool,
+        toolbar_visible: bool,
+        scale_percent: i32,
     }
 
     pub fn run(source_width: i32, source_height: i32, x: i32, y: i32, bgra: Vec<u8>) {
@@ -68,6 +72,9 @@ mod platform {
                 source_height,
                 bgra,
                 opacity: 255,
+                locked: false,
+                toolbar_visible: false,
+                scale_percent: 100,
             });
         });
         let _ = unsafe { run_window(x, y, source_width, source_height) };
@@ -132,18 +139,30 @@ mod platform {
                 paint(hwnd);
                 LRESULT(0)
             }
-            WM_NCHITTEST => LRESULT(HTCAPTION as isize),
+            WM_NCHITTEST => hit_test(hwnd, lparam),
             WM_MOUSEWHEEL => {
                 let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
                 if GetKeyState(VK_CONTROL.0 as i32) < 0 {
                     adjust_opacity(hwnd, delta.signum() * 16);
                 } else {
-                    resize(hwnd, if delta > 0 { 1.1 } else { 0.9 });
+                    resize(
+                        hwnd,
+                        if delta > 0 { 1.1 } else { 0.9 },
+                        screen_point(lparam),
+                    );
                 }
+                LRESULT(0)
+            }
+            WM_LBUTTONUP => {
+                toolbar_click(hwnd, mouse_point(lparam));
                 LRESULT(0)
             }
             WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
                 let _ = DestroyWindow(hwnd);
+                LRESULT(0)
+            }
+            WM_KEYDOWN if wparam.0 as u16 == b'L' as u16 => {
+                toggle_lock(hwnd);
                 LRESULT(0)
             }
             WM_RBUTTONUP | WM_NCRBUTTONUP => {
@@ -199,30 +218,61 @@ mod platform {
                     SelectObject(dc, old_brush);
                     SelectObject(dc, old_pen);
                     DeleteObject(border_pen.into());
+
+                    if state.toolbar_visible {
+                        draw_toolbar(dc, client.right, state);
+                    }
                 }
             }
         });
         EndPaint(hwnd, &paint);
     }
 
-    unsafe fn resize(hwnd: HWND, factor: f64) {
+    unsafe fn resize(hwnd: HWND, factor: f64, cursor: (i32, i32)) {
         let mut rect = RECT::default();
         if GetWindowRect(hwnd, &mut rect).is_err() {
             return;
         }
         let current_width = rect.right - rect.left;
         let current_height = rect.bottom - rect.top;
-        let new_width = ((current_width as f64 * factor).round() as i32).clamp(80, 2400);
-        let new_height = ((current_height as f64 * factor).round() as i32).clamp(60, 1600);
+        let (new_width, new_height) = STATE.with(|state| {
+            let state = state.borrow();
+            let Some(state) = state.as_ref() else {
+                return (current_width, current_height);
+            };
+            let current_scale = current_width as f64 / state.source_width as f64;
+            let maximum_scale = (2400.0 / state.source_width as f64)
+                .min(1600.0 / state.source_height as f64)
+                .max(0.05);
+            let minimum_scale = (80.0 / state.source_width as f64)
+                .max(60.0 / state.source_height as f64)
+                .min(maximum_scale);
+            let scale = (current_scale * factor).clamp(minimum_scale, maximum_scale);
+            (
+                (state.source_width as f64 * scale).round() as i32,
+                (state.source_height as f64 * scale).round() as i32,
+            )
+        });
+        let new_x = cursor.0
+            - ((cursor.0 - rect.left) as i64 * new_width as i64 / current_width as i64) as i32;
+        let new_y = cursor.1
+            - ((cursor.1 - rect.top) as i64 * new_height as i64 / current_height as i64) as i32;
         let _ = SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
-            0,
-            0,
+            new_x,
+            new_y,
             new_width,
             new_height,
-            SWP_NOMOVE | SWP_NOACTIVATE,
+            SWP_NOACTIVATE,
         );
+        STATE.with(|state| {
+            if let Some(state) = state.borrow_mut().as_mut() {
+                state.scale_percent =
+                    (new_width as f64 / state.source_width as f64 * 100.0).round() as i32;
+            }
+        });
+        InvalidateRect(Some(hwnd), None, false);
     }
 
     unsafe fn adjust_opacity(hwnd: HWND, delta: i32) {
@@ -232,6 +282,115 @@ mod platform {
                 let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), state.opacity, LWA_ALPHA);
             }
         });
+        InvalidateRect(Some(hwnd), None, false);
+    }
+
+    unsafe fn hit_test(hwnd: HWND, lparam: LPARAM) -> LRESULT {
+        let screen = screen_point(lparam);
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return LRESULT(HTCAPTION as isize);
+        }
+        let local_x = screen.0 - rect.left;
+        let local_y = screen.1 - rect.top;
+        let in_toolbar =
+            local_x >= 0 && local_x < rect.right - rect.left && local_y >= 0 && local_y < 34;
+        let locked = STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(state) = state.as_mut() else {
+                return false;
+            };
+            if state.toolbar_visible != in_toolbar {
+                state.toolbar_visible = in_toolbar;
+                InvalidateRect(Some(hwnd), None, false);
+            }
+            state.locked
+        });
+        if in_toolbar || locked {
+            LRESULT(HTCLIENT as isize)
+        } else {
+            LRESULT(HTCAPTION as isize)
+        }
+    }
+
+    unsafe fn toolbar_click(hwnd: HWND, point: (i32, i32)) {
+        if point.1 >= 34 {
+            return;
+        }
+        let mut client = RECT::default();
+        if GetClientRect(hwnd, &mut client).is_err() {
+            return;
+        }
+        if point.0 >= client.right - 64 {
+            let _ = DestroyWindow(hwnd);
+        } else if point.0 < 76 {
+            toggle_lock(hwnd);
+        } else if point.0 < 146 {
+            adjust_opacity(hwnd, -16);
+        } else if point.0 < 216 {
+            adjust_opacity(hwnd, 16);
+        }
+    }
+
+    unsafe fn toggle_lock(hwnd: HWND) {
+        STATE.with(|state| {
+            if let Some(state) = state.borrow_mut().as_mut() {
+                state.locked = !state.locked;
+            }
+        });
+        InvalidateRect(Some(hwnd), None, false);
+    }
+
+    unsafe fn draw_toolbar(
+        dc: windows::Win32::Graphics::Gdi::HDC,
+        width: i32,
+        state: &StickerState,
+    ) {
+        let toolbar_brush = CreateSolidBrush(COLORREF(0x0020_1A16));
+        let old_brush = SelectObject(dc, toolbar_brush.into());
+        let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(dc, 0, 0, width, 34);
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        DeleteObject(toolbar_brush.into());
+
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, COLORREF(0x00AD_E774));
+        draw_text(
+            dc,
+            10,
+            8,
+            if state.locked {
+                "已鎖定"
+            } else {
+                "可移動"
+            },
+        );
+        draw_text(dc, 88, 8, "透明−");
+        draw_text(dc, 158, 8, "透明+");
+        let status = format!(
+            "{}% · α{}%",
+            state.scale_percent,
+            (state.opacity as f64 / 255.0 * 100.0).round() as i32
+        );
+        draw_text(dc, 230, 8, &status);
+        draw_text(dc, (width - 48).max(230), 8, "關閉");
+    }
+
+    unsafe fn draw_text(dc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32, text: &str) {
+        let text: Vec<u16> = text.encode_utf16().collect();
+        TextOutW(dc, x, y, &text);
+    }
+
+    fn screen_point(lparam: LPARAM) -> (i32, i32) {
+        (
+            (lparam.0 as u16 as i16) as i32,
+            ((lparam.0 >> 16) as u16 as i16) as i32,
+        )
+    }
+
+    fn mouse_point(lparam: LPARAM) -> (i32, i32) {
+        screen_point(lparam)
     }
 }
 
