@@ -55,7 +55,7 @@ enum NativeAnnotation {
     Text {
         x: i32,
         y: i32,
-        text: [u16; 64],
+        text: [u16; 32],
         length: usize,
         font_size: i32,
         color: u32,
@@ -384,7 +384,7 @@ fn apply_native_annotations(
                     selection.height,
                     x - selection.x,
                     y - selection.y,
-                    &text[..length.min(64)],
+                    &text[..length.min(32)],
                     font_size,
                     color,
                     outline_color,
@@ -1365,7 +1365,7 @@ mod platform {
                             if character == VK_BACK.0 {
                                 input.buffer.pop();
                             } else if character == VK_RETURN.0 {
-                            } else if character >= 0x20 && input.buffer.len() < 64 {
+                            } else if character >= 0x20 && input.buffer.len() < 32 {
                                 input.buffer.push(character);
                             }
                             if character == VK_RETURN.0 {
@@ -1797,8 +1797,8 @@ mod platform {
         if input.buffer.is_empty() {
             return;
         }
-        let mut text = [0u16; 64];
-        let length = input.buffer.len().min(64);
+        let mut text = [0u16; 32];
+        let length = input.buffer.len().min(32);
         text[..length].copy_from_slice(&input.buffer[..length]);
         state.annotations.push(NativeAnnotation::Text {
             x: input.x,
@@ -2176,8 +2176,8 @@ mod platform {
             );
         }
         if let Some(input) = state.text_input.as_ref() {
-            let mut text = [0u16; 64];
-            let length = input.buffer.len().min(64);
+            let mut text = [0u16; 32];
+            let length = input.buffer.len().min(32);
             text[..length].copy_from_slice(&input.buffer[..length]);
             draw_native_annotation(
                 dc,
