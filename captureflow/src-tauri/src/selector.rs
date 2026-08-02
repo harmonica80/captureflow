@@ -586,7 +586,7 @@ mod platform {
         Win32::{
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
             Graphics::Gdi::{
-                BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen,
+                Arc, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen,
                 CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect, GetStockObject,
                 InvalidateRect, LineTo, MoveToEx, Polygon, Rectangle, RoundRect, SelectObject,
                 SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
@@ -840,6 +840,8 @@ mod platform {
                                     }
                                     3 => {
                                         state.annotations.pop();
+                                        state.selected_annotation = None;
+                                        state.hovered_annotation = None;
                                     }
                                     4 => {
                                         let result = SelectedArea {
@@ -1708,13 +1710,22 @@ mod platform {
                 DeleteObject(brush.into());
             }
             3 => {
-                MoveToEx(dc, left + 30, top + 14, None);
-                let _ = LineTo(dc, left + 20, top + 14);
-                let _ = LineTo(dc, left + 14, top + 20);
-                let _ = LineTo(dc, left + 20, top + 26);
-                MoveToEx(dc, left + 15, top + 20, None);
-                let _ = LineTo(dc, left + 30, top + 20);
-                let _ = LineTo(dc, left + 33, top + 25);
+                // PixPin-style undo: a smooth counter-clockwise arc with a compact arrow head.
+                let _ = Arc(
+                    dc,
+                    left + 12,
+                    top + 11,
+                    left + 34,
+                    top + 33,
+                    left + 13,
+                    top + 22,
+                    left + 30,
+                    top + 29,
+                );
+                MoveToEx(dc, left + 13, top + 22, None);
+                let _ = LineTo(dc, left + 20, top + 16);
+                MoveToEx(dc, left + 13, top + 22, None);
+                let _ = LineTo(dc, left + 21, top + 25);
             }
             4 => {
                 MoveToEx(dc, left + 12, top + 22, None);
@@ -1727,6 +1738,7 @@ mod platform {
                 MoveToEx(dc, left + 30, top + 14, None);
                 let _ = LineTo(dc, left + 14, top + 30);
             }
+            _ => {}
         }
         SelectObject(dc, old_brush);
         SelectObject(dc, old_pen);
@@ -2183,7 +2195,7 @@ mod platform {
                         control_x,
                         control_y,
                         ..
-                    } => (0..=16).any(|index| {
+                    } => (0_i32..=16).any(|index| {
                         let t1 = f64::from(index) / 16.0;
                         let t0 = f64::from(index.saturating_sub(1)) / 16.0;
                         let curve = |t: f64| {
