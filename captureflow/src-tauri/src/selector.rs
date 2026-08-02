@@ -512,7 +512,7 @@ fn path_string(path: PathBuf) -> String {
 
 #[cfg(windows)]
 mod platform {
-    use super::{NativeAnnotation, SelectedArea};
+    use super::{tapered_arrow_points, NativeAnnotation, SelectedArea};
     use crate::capture::RectInfo;
     use std::{mem::size_of, sync::mpsc};
     use windows::{
