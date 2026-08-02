@@ -1318,7 +1318,7 @@ mod platform {
                 (0, Some(AnnotationTool::Rectangle)) | (1, Some(AnnotationTool::Arrow))
             );
             if selected {
-                let brush = CreateSolidBrush(COLORREF(0x00FF_7B18));
+                let brush = CreateSolidBrush(COLORREF(0x00FF_DC9B));
                 let area = RECT {
                     left,
                     top: toolbar.top,
@@ -1328,14 +1328,7 @@ mod platform {
                 FillRect(dc, &area, brush);
                 DeleteObject(brush.into());
             }
-            SetTextColor(
-                dc,
-                if selected {
-                    COLORREF(0x00FF_FFFF)
-                } else {
-                    COLORREF(0x0025_2525)
-                },
-            );
+            SetTextColor(dc, COLORREF(0x0025_1B07));
             let text: Vec<u16> = label.encode_utf16().collect();
             TextOutW(dc, left + 15, toolbar.top + 13, &text);
         }
