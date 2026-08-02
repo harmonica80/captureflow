@@ -32,3 +32,24 @@
 - 驗證文字 I-beam、物件外框、控制點、移動、滾輪字級及文字／外框雙色設定。
 - 工具列須與使用者提供的 PixPin 參考圖並排比較後再交付。
 - 所有文字及狀態仍須符合專案 WCAG AA 4.5:1 準則。
+
+## Keyviz 參考實作（2026-08-03 補充）
+
+使用者確認 CaptureFlow 可直接參考先前共同開發的 Keyviz 多螢幕版本：
+
+- Repository／Release：`https://github.com/harmonica80/keyviz-multi-monitor/releases`
+- 本機完整原始碼：`D:\個人資料\ChatGPT測試資料夾\outputs\keyviz-current-work`
+- 工具與向量圖示定義：`src/lib/drawing-tools.tsx`
+  - 使用 Lucide SVG 圖示，包括 `Pencil`、`ArrowUpRight`、`Square`、`Circle`、`Type`、`Eraser` 與物件選取圖示。
+  - CaptureFlow 工具列應沿用相同 24×24 viewBox、`currentColor`、一致線寬與圓角端點的設計語言，不再自行以 GDI 折線臨摹圖示。
+- 抗鋸齒繪圖與物件資料：`src/pages/screen-drawing.tsx`
+  - Canvas 依 `devicePixelRatio` 建立高解析度 backing store。
+  - 使用 `lineCap = "round"`、`lineJoin = "round"`、Canvas path／ellipse／fillText，作為平滑預覽基礎。
+  - `drawTaperedArrow` 已有實心漸寬箭頭幾何，可移植並再接上 CaptureFlow 的中央曲率控制點。
+  - 文字使用 Microsoft JhengHei，字級由 width 映射，編輯期間支援滾輪調整。
+- 工具列狀態：`src/stores/drawing_toolbar.ts`
+  - 可重用工具清單、顯示順序、正規化與持久化方式。
+- 原生透明繪圖層：`src-tauri/src/app/native_drawing.rs`
+  - 可參考多螢幕、DPI、透明疊加視窗及 premultiplied alpha 處理。
+
+導入原則：先移植 Keyviz 已驗證的 SVG／Canvas 繪圖層與工具列元件，再保留 CaptureFlow 的截圖選取框、物件控制點、可編輯專案及輸出流程；不可只複製外觀而繼續使用會產生鋸齒的 GDI 最終繪圖。
