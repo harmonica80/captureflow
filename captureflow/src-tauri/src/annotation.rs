@@ -1,13 +1,13 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{fs, time::SystemTime};
 use tauri::{AppHandle, Manager};
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AnnotationProject<'a> {
+pub struct AnnotationProject {
     schema_version: u32,
     created_at_unix_ms: u128,
-    source_image: &'a str,
+    source_image: String,
     canvas_width: u32,
     canvas_height: u32,
     objects: serde_json::Value,
@@ -47,7 +47,7 @@ pub fn save_project(
     let project = AnnotationProject {
         schema_version: 1,
         created_at_unix_ms: timestamp,
-        source_image: image_path,
+        source_image: image_path.to_string(),
         canvas_width,
         canvas_height,
         objects: serde_json::Value::Array(objects.clone()),
@@ -59,4 +59,45 @@ pub fn save_project(
     )
     .map_err(|error| format!("無法儲存專案：{error}"))?;
     Ok(output.to_string_lossy().into_owned())
+}
+
+pub fn load_latest_project(app: &AppHandle, image_path: &str) -> Result<AnnotationProject, String> {
+    let source = fs::canonicalize(image_path).map_err(|error| format!("無法讀取底圖：{error}"))?;
+    let app_data = fs::canonicalize(
+        app.path()
+            .app_data_dir()
+            .map_err(|error| format!("無法取得應用程式資料目錄：{error}"))?,
+    )
+    .map_err(|error| format!("無法讀取應用程式資料目錄：{error}"))?;
+    if !source.starts_with(&app_data) {
+        return Err("只能開啟 CaptureFlow 產生的截圖專案。".into());
+    }
+
+    let project_dir = app_data.join("projects");
+    let entries = fs::read_dir(&project_dir).map_err(|_| "尚未儲存任何可編輯專案。".to_string())?;
+    let mut matches = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&path) else { continue };
+        let Ok(project) = serde_json::from_slice::<AnnotationProject>(&bytes) else {
+            continue;
+        };
+        let Ok(project_source) = fs::canonicalize(&project.source_image) else {
+            continue;
+        };
+        if project.schema_version == 1
+            && project_source == source
+            && project.objects.as_array().is_some()
+        {
+            matches.push((project.created_at_unix_ms, project));
+        }
+    }
+    matches
+        .into_iter()
+        .max_by_key(|(created_at, _)| *created_at)
+        .map(|(_, project)| project)
+        .ok_or_else(|| "找不到目前截圖的可編輯專案。請先儲存一次。".to_string())
 }

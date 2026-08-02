@@ -86,7 +86,11 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .annotation-help { color: #b9c9c1; font-size: 13px; }
 .annotation-stage { position: relative; width: 100%; overflow: hidden; border: 1px solid #668477; border-radius: 10px; background: #26332e; touch-action: none; }
 .annotation-stage canvas, .annotation-stage svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-.annotation-stage svg { cursor: crosshair; }
+.annotation-stage svg.drawing { cursor: crosshair; }
+.annotation-stage svg.selecting { cursor: default; }
+.annotation-stage svg.selecting polygon, .annotation-stage svg.selecting > rect { cursor: move; }
+.annotation-selection { fill: none; stroke: #071b25; stroke-width: 3; stroke-dasharray: 9 5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.annotation-handle { fill: #9bdcff; stroke: #071b25; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: nwse-resize; }
 .annotation-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f4f7f5; background: #26332e; font-weight: 700; }
 
 .roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: clamp(54px, 9vw, 110px); }
