@@ -15,6 +15,31 @@ type Props = {
   onClose: () => void;
 };
 
+function arrowPolygon(x1: number, y1: number, x2: number, y2: number, strokeWidth: number) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const ux = dx / length;
+  const uy = dy / length;
+  const px = -uy;
+  const py = ux;
+  const headLength = Math.min(length * 0.45, Math.max(strokeWidth * 6, length * 0.2));
+  const neckX = x2 - ux * headLength;
+  const neckY = y2 - uy * headLength;
+  const tailHalf = Math.max(0.7, strokeWidth * 0.22);
+  const neckHalf = strokeWidth * 1.15;
+  const headHalf = strokeWidth * 3.5;
+  return [
+    [x1 + px * tailHalf, y1 + py * tailHalf],
+    [neckX + px * neckHalf, neckY + py * neckHalf],
+    [neckX + px * headHalf, neckY + py * headHalf],
+    [x2, y2],
+    [neckX - px * headHalf, neckY - py * headHalf],
+    [neckX - px * neckHalf, neckY - py * neckHalf],
+    [x1 - px * tailHalf, y1 - py * tailHalf],
+  ].map(([x, y]) => `${x},${y}`).join(" ");
+}
+
 export default function AnnotationEditor({ imagePath, width, height, onClose }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tool, setTool] = useState<Tool>("rectangle");
@@ -136,12 +161,11 @@ export default function AnnotationEditor({ imagePath, width, height, onClose }: 
         <canvas ref={canvasRef} width={width} height={height} aria-label="截圖底圖" />
         {!loading && (
           <svg viewBox={`0 0 ${width} ${height}`} onPointerDown={pointerDown} onPointerMove={(event) => start && setCurrent(pointFromEvent(event))} onPointerUp={pointerUp} aria-label="標註畫布">
-            <defs><marker id="arrowhead" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 Z" fill="#ff3b30" /></marker></defs>
             {objects.map((object) => object.type === "rectangle"
               ? <rect key={object.id} x={object.x} y={object.y} width={object.width} height={object.height} fill="none" stroke={object.color} strokeWidth={object.strokeWidth} />
-              : <line key={object.id} x1={object.x1} y1={object.y1} x2={object.x2} y2={object.y2} stroke={object.color} strokeWidth={object.strokeWidth} markerEnd="url(#arrowhead)" />)}
+              : <polygon key={object.id} points={arrowPolygon(object.x1, object.y1, object.x2, object.y2, object.strokeWidth)} fill={object.color} />)}
             {draft && tool === "rectangle" && <rect x={Math.min(draft.start.x, draft.end.x)} y={Math.min(draft.start.y, draft.end.y)} width={Math.abs(draft.end.x - draft.start.x)} height={Math.abs(draft.end.y - draft.start.y)} fill="none" stroke="#ff3b30" strokeWidth="4" strokeDasharray="10 6" />}
-            {draft && tool === "arrow" && <line x1={draft.start.x} y1={draft.start.y} x2={draft.end.x} y2={draft.end.y} stroke="#ff3b30" strokeWidth="4" strokeDasharray="10 6" markerEnd="url(#arrowhead)" />}
+            {draft && tool === "arrow" && <polygon points={arrowPolygon(draft.start.x, draft.start.y, draft.end.x, draft.end.y, 4)} fill="#ff3b30" opacity="0.82" />}
           </svg>
         )}
         {loading && <div className="annotation-loading">正在載入底圖…</div>}
