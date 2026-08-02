@@ -2,6 +2,7 @@ use crate::capture::{capture_frame, MonitorInfo, RectInfo};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, time::SystemTime};
 use tauri::{AppHandle, Manager};
+use tiny_skia::{FillRule, Paint, PathBuilder, PixmapMut, Rect as SkRect, Stroke, Transform};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -269,6 +270,13 @@ fn apply_native_annotations(
     selection: RectInfo,
     annotations: &[NativeAnnotation],
 ) {
+    let Some(mut pixmap) = PixmapMut::from_bytes(
+        pixels,
+        selection.width.max(1) as u32,
+        selection.height.max(1) as u32,
+    ) else {
+        return;
+    };
     for annotation in annotations {
         match *annotation {
             NativeAnnotation::Rectangle {
@@ -283,50 +291,20 @@ fn apply_native_annotations(
                 let right = start_x.max(end_x) - selection.x;
                 let top = start_y.min(end_y) - selection.y;
                 let bottom = start_y.max(end_y) - selection.y;
-                draw_rgba_line(
-                    pixels,
-                    selection.width,
-                    selection.height,
-                    left,
-                    top,
-                    right,
-                    top,
-                    stroke_width,
-                    color,
-                );
-                draw_rgba_line(
-                    pixels,
-                    selection.width,
-                    selection.height,
-                    right,
-                    top,
-                    right,
-                    bottom,
-                    stroke_width,
-                    color,
-                );
-                draw_rgba_line(
-                    pixels,
-                    selection.width,
-                    selection.height,
-                    right,
-                    bottom,
-                    left,
-                    bottom,
-                    stroke_width,
-                    color,
-                );
-                draw_rgba_line(
-                    pixels,
-                    selection.width,
-                    selection.height,
-                    left,
-                    bottom,
-                    left,
-                    top,
-                    stroke_width,
-                    color,
-                );
+                if let Some(rect) =
+                    SkRect::from_ltrb(left as f32, top as f32, right as f32, bottom as f32)
+                {
+                    let mut path = PathBuilder::new();
+                    path.push_rect(rect);
+                    let path = path.finish().unwrap();
+                    pixmap.stroke_path(
+                        &path,
+                        &skia_paint(color),
+                        &skia_stroke(stroke_width),
+                        Transform::identity(),
+                        None,
+                    );
+                }
             }
             NativeAnnotation::Arrow {
                 start_x,
@@ -347,7 +325,7 @@ fn apply_native_annotations(
                     control_y - selection.y,
                     f64::from(stroke_width),
                 );
-                fill_rgba_polygon(pixels, selection.width, selection.height, &points, color);
+                fill_skia_polygon(&mut pixmap, &points, color);
             }
             NativeAnnotation::Ellipse {
                 start_x,
@@ -357,17 +335,24 @@ fn apply_native_annotations(
                 stroke_width,
                 color,
             } => {
-                draw_rgba_ellipse(
-                    pixels,
-                    selection.width,
-                    selection.height,
-                    start_x - selection.x,
-                    start_y - selection.y,
-                    end_x - selection.x,
-                    end_y - selection.y,
-                    stroke_width,
-                    color,
-                );
+                let left = start_x.min(end_x) - selection.x;
+                let right = start_x.max(end_x) - selection.x;
+                let top = start_y.min(end_y) - selection.y;
+                let bottom = start_y.max(end_y) - selection.y;
+                if let Some(rect) =
+                    SkRect::from_ltrb(left as f32, top as f32, right as f32, bottom as f32)
+                {
+                    let mut path = PathBuilder::new();
+                    path.push_oval(rect);
+                    let path = path.finish().unwrap();
+                    pixmap.stroke_path(
+                        &path,
+                        &skia_paint(color),
+                        &skia_stroke(stroke_width),
+                        Transform::identity(),
+                        None,
+                    );
+                }
             }
             NativeAnnotation::Text {
                 x,
@@ -379,7 +364,7 @@ fn apply_native_annotations(
                 outline_color,
             } => {
                 draw_rgba_text(
-                    pixels,
+                    pixmap.data_mut(),
                     selection.width,
                     selection.height,
                     x - selection.x,
@@ -391,6 +376,44 @@ fn apply_native_annotations(
                 );
             }
         }
+    }
+}
+
+fn skia_paint(color: u32) -> Paint<'static> {
+    let rgba = colorref_to_rgba(color);
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(rgba[0], rgba[1], rgba[2], rgba[3]);
+    paint.anti_alias = true;
+    paint
+}
+
+fn skia_stroke(width: i32) -> Stroke {
+    Stroke {
+        width: width.max(1) as f32,
+        line_cap: tiny_skia::LineCap::Round,
+        line_join: tiny_skia::LineJoin::Round,
+        ..Default::default()
+    }
+}
+
+fn fill_skia_polygon(pixmap: &mut PixmapMut<'_>, points: &[(i32, i32)], color: u32) {
+    let Some(first) = points.first() else {
+        return;
+    };
+    let mut builder = PathBuilder::new();
+    builder.move_to(first.0 as f32, first.1 as f32);
+    for point in &points[1..] {
+        builder.line_to(point.0 as f32, point.1 as f32);
+    }
+    builder.close();
+    if let Some(path) = builder.finish() {
+        pixmap.fill_path(
+            &path,
+            &skia_paint(color),
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
     }
 }
 
@@ -749,20 +772,23 @@ fn path_string(path: PathBuf) -> String {
 
 #[cfg(windows)]
 mod platform {
-    use super::{curved_arrow_points, tapered_arrow_points, NativeAnnotation, SelectedArea};
+    use super::{
+        apply_native_annotations, curved_arrow_points, tapered_arrow_points, NativeAnnotation,
+        SelectedArea,
+    };
     use crate::capture::RectInfo;
     use std::{mem::size_of, sync::mpsc};
     use windows::{
-        core::w,
+        core::{w, PCWSTR},
         Win32::{
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
             Graphics::Gdi::{
-                Arc, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen,
-                CreateSolidBrush, DeleteDC, DeleteObject, Ellipse, EndPaint, FillRect,
+                Arc, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW,
+                CreatePen, CreateSolidBrush, DeleteDC, DeleteObject, Ellipse, EndPaint, FillRect,
                 GetStockObject, InvalidateRect, LineTo, MoveToEx, Polygon, Rectangle, RoundRect,
                 SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
                 BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, NULL_PEN, PAINTSTRUCT,
-                PS_SOLID, SRCCOPY, TRANSPARENT,
+                PS_DOT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -776,11 +802,11 @@ mod platform {
                     GetWindow, GetWindowRect, IsIconic, IsWindowVisible, LoadCursorW, PostMessageW,
                     PostQuitMessage, RegisterClassW, SetCursor, SetForegroundWindow, ShowWindow,
                     TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
-                    IDC_ARROW, IDC_CROSS, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
-                    IDC_SIZEWE, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY,
-                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-                    WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WNDCLASSW, WS_EX_TOOLWINDOW,
-                    WS_EX_TOPMOST, WS_POPUP,
+                    IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS,
+                    IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE,
+                    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WNDCLASSW,
+                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -871,6 +897,10 @@ mod platform {
         x: i32,
         y: i32,
         buffer: Vec<u16>,
+        font_size: i32,
+        color: u32,
+        outline_color: u32,
+        editing_index: Option<usize>,
     }
 
     #[derive(Clone, Copy)]
@@ -1019,6 +1049,9 @@ mod platform {
                                         && GetKeyState(VK_SHIFT.0 as i32) < 0
                                     {
                                         state.text_outline_color = chosen;
+                                        if let Some(input) = state.text_input.as_mut() {
+                                            input.outline_color = chosen;
+                                        }
                                         if let Some(index) = state.selected_annotation {
                                             set_text_outline_color(
                                                 &mut state.annotations[index],
@@ -1027,6 +1060,9 @@ mod platform {
                                         }
                                     } else {
                                         state.current_color = chosen;
+                                        if let Some(input) = state.text_input.as_mut() {
+                                            input.color = chosen;
+                                        }
                                         if let Some(index) = state.selected_annotation {
                                             set_native_color(&mut state.annotations[index], chosen);
                                         }
@@ -1111,6 +1147,35 @@ mod platform {
                                 return LRESULT(0);
                             }
                             if let Some(index) = hit_native_annotation(point, &state.annotations) {
+                                if let NativeAnnotation::Text {
+                                    x,
+                                    y,
+                                    text,
+                                    length,
+                                    font_size,
+                                    color,
+                                    outline_color,
+                                } = state.annotations[index]
+                                {
+                                    if state.selected_annotation == Some(index)
+                                        && matches!(
+                                            state.annotation_tool,
+                                            Some(AnnotationTool::Text)
+                                        )
+                                    {
+                                        state.text_input = Some(TextInput {
+                                            x,
+                                            y,
+                                            buffer: text[..length.min(text.len())].to_vec(),
+                                            font_size,
+                                            color,
+                                            outline_color,
+                                            editing_index: Some(index),
+                                        });
+                                        InvalidateRect(Some(hwnd), None, false);
+                                        return LRESULT(0);
+                                    }
+                                }
                                 state.selected_annotation = Some(index);
                                 state.hovered_annotation = Some(index);
                                 state.annotation_tool = Some(match state.annotations[index] {
@@ -1139,6 +1204,10 @@ mod platform {
                                             x: point.0,
                                             y: point.1,
                                             buffer: Vec::new(),
+                                            font_size: 24,
+                                            color: state.current_color,
+                                            outline_color: state.text_outline_color,
+                                            editing_index: None,
                                         });
                                     } else {
                                         state.interaction =
@@ -1379,6 +1448,14 @@ mod platform {
                 DefWindowProcW(hwnd, message, wparam, lparam)
             }
             WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
+                if let Ok(mut guard) = STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        if state.text_input.take().is_some() {
+                            InvalidateRect(Some(hwnd), None, false);
+                            return LRESULT(0);
+                        }
+                    }
+                }
                 finish(None);
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
@@ -1414,7 +1491,10 @@ mod platform {
                 let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if let Some(index) = state.hovered_annotation {
+                        if let Some(input) = state.text_input.as_mut() {
+                            input.font_size =
+                                (input.font_size + if delta > 0 { 2 } else { -2 }).clamp(8, 160);
+                        } else if let Some(index) = state.hovered_annotation {
                             let step = if delta > 0 { 1 } else { -1 };
                             set_native_stroke_width(&mut state.annotations[index], step);
                             state.selected_annotation = Some(index);
@@ -1514,6 +1594,8 @@ mod platform {
                     },
                     ..Default::default()
                 };
+                let mut rendered_bgra = state.composite_bgra.clone();
+                composite_vector_annotations(&mut rendered_bgra, state);
                 StretchDIBits(
                     dc,
                     0,
@@ -1524,7 +1606,7 @@ mod platform {
                     0,
                     state.width,
                     state.height,
-                    Some(state.composite_bgra.as_ptr().cast()),
+                    Some(rendered_bgra.as_ptr().cast()),
                     &info,
                     DIB_RGB_COLORS,
                     SRCCOPY,
@@ -1800,16 +1882,25 @@ mod platform {
         let mut text = [0u16; 32];
         let length = input.buffer.len().min(32);
         text[..length].copy_from_slice(&input.buffer[..length]);
-        state.annotations.push(NativeAnnotation::Text {
+        let annotation = NativeAnnotation::Text {
             x: input.x,
             y: input.y,
             text,
             length,
-            font_size: 24,
-            color: state.current_color,
-            outline_color: state.text_outline_color,
-        });
-        state.selected_annotation = Some(state.annotations.len() - 1);
+            font_size: input.font_size,
+            color: input.color,
+            outline_color: input.outline_color,
+        };
+        if let Some(index) = input
+            .editing_index
+            .filter(|index| *index < state.annotations.len())
+        {
+            state.annotations[index] = annotation;
+            state.selected_annotation = Some(index);
+        } else {
+            state.annotations.push(annotation);
+            state.selected_annotation = Some(state.annotations.len() - 1);
+        }
     }
 
     fn normalize_rect(start: (i32, i32), end: (i32, i32)) -> RectInfo {
@@ -2038,7 +2129,7 @@ mod platform {
                 SelectObject(dc, previous_pen);
                 DeleteObject(separator.into());
             }
-            draw_toolbar_icon(dc, index, left, toolbar.top, state.current_color);
+            draw_toolbar_icon(dc, index, left, toolbar.top, state.current_color, selected);
         }
         if state.color_palette_open {
             draw_color_palette(dc, state, rect);
@@ -2055,125 +2146,243 @@ mod platform {
         left: i32,
         top: i32,
         current_color: u32,
+        selected: bool,
     ) {
-        let pen = CreatePen(PS_SOLID, 2, COLORREF(0x0025_2525));
-        let old_pen = SelectObject(dc, pen.into());
-        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        let Some(mut pixmap) = tiny_skia::Pixmap::new(44, 44) else {
+            return;
+        };
+        pixmap.fill(if selected {
+            tiny_skia::Color::from_rgba8(155, 220, 255, 255)
+        } else {
+            tiny_skia::Color::from_rgba8(250, 250, 250, 255)
+        });
+        let mut paint = tiny_skia::Paint::default();
+        paint.set_color_rgba8(37, 37, 37, 255);
+        paint.anti_alias = true;
+        let stroke = tiny_skia::Stroke {
+            width: 2.0,
+            line_cap: tiny_skia::LineCap::Round,
+            line_join: tiny_skia::LineJoin::Round,
+            ..Default::default()
+        };
+        let mut path = tiny_skia::PathBuilder::new();
         match index {
             0 => {
-                Rectangle(dc, left + 13, top + 12, left + 31, top + 31);
+                if let Some(rect) = tiny_skia::Rect::from_xywh(13.0, 13.0, 18.0, 18.0) {
+                    path.push_rect(rect);
+                }
             }
             1 => {
-                Ellipse(dc, left + 12, top + 12, left + 32, top + 32);
+                if let Some(rect) = tiny_skia::Rect::from_xywh(12.0, 12.0, 20.0, 20.0) {
+                    path.push_oval(rect);
+                }
             }
             2 => {
-                let points: Vec<POINT> =
-                    tapered_arrow_points(left + 12, top + 31, left + 32, top + 11, 2.5)
-                        .into_iter()
-                        .map(|(x, y)| POINT { x, y })
-                        .collect();
-                let brush = CreateSolidBrush(COLORREF(0x0025_2525));
-                let previous_brush = SelectObject(dc, brush.into());
-                let previous_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-                Polygon(dc, &points);
-                SelectObject(dc, previous_pen);
-                SelectObject(dc, previous_brush);
-                DeleteObject(brush.into());
+                path.move_to(12.0, 31.0);
+                path.line_to(32.0, 11.0);
+                path.move_to(20.0, 11.0);
+                path.line_to(32.0, 11.0);
+                path.line_to(32.0, 23.0);
             }
             3 => {
-                SetBkMode(dc, TRANSPARENT);
-                SetTextColor(dc, COLORREF(0x0025_2525));
-                let label: Vec<u16> = "T".encode_utf16().collect();
-                TextOutW(dc, left + 16, top + 11, &label);
+                path.move_to(13.0, 12.0);
+                path.line_to(31.0, 12.0);
+                path.move_to(22.0, 12.0);
+                path.line_to(22.0, 32.0);
             }
             4 => {
-                let brush = CreateSolidBrush(COLORREF(current_color));
-                let previous_brush = SelectObject(dc, brush.into());
-                let swatch_pen = CreatePen(PS_SOLID, 1, COLORREF(0x0040_4040));
-                let previous_pen = SelectObject(dc, swatch_pen.into());
-                RoundRect(dc, left + 12, top + 12, left + 32, top + 32, 10, 10);
-                SelectObject(dc, previous_pen);
-                SelectObject(dc, previous_brush);
-                DeleteObject(swatch_pen.into());
-                DeleteObject(brush.into());
+                if let Some(rect) = tiny_skia::Rect::from_xywh(13.0, 13.0, 18.0, 18.0) {
+                    let rgba = super::colorref_to_rgba(current_color);
+                    let mut fill = tiny_skia::Paint::default();
+                    fill.set_color_rgba8(rgba[0], rgba[1], rgba[2], 255);
+                    fill.anti_alias = true;
+                    let mut swatch = tiny_skia::PathBuilder::new();
+                    swatch.push_rect(rect);
+                    if let Some(swatch) = swatch.finish() {
+                        pixmap.fill_path(
+                            &swatch,
+                            &fill,
+                            tiny_skia::FillRule::Winding,
+                            tiny_skia::Transform::identity(),
+                            None,
+                        );
+                        pixmap.stroke_path(
+                            &swatch,
+                            &paint,
+                            &tiny_skia::Stroke {
+                                width: 1.0,
+                                ..stroke.clone()
+                            },
+                            tiny_skia::Transform::identity(),
+                            None,
+                        );
+                    }
+                }
             }
             5 => {
-                // PixPin-style undo: a smooth counter-clockwise arc with a compact arrow head.
-                let _ = Arc(
-                    dc,
-                    left + 12,
-                    top + 11,
-                    left + 34,
-                    top + 33,
-                    left + 13,
-                    top + 22,
-                    left + 30,
-                    top + 29,
-                );
-                MoveToEx(dc, left + 13, top + 22, None);
-                let _ = LineTo(dc, left + 20, top + 16);
-                MoveToEx(dc, left + 13, top + 22, None);
-                let _ = LineTo(dc, left + 21, top + 25);
+                path.move_to(14.0, 22.0);
+                path.line_to(20.0, 16.0);
+                path.move_to(14.0, 22.0);
+                path.line_to(21.0, 25.0);
+                path.cubic_to(17.0, 12.0, 34.0, 12.0, 32.0, 27.0);
             }
             6 => {
-                MoveToEx(dc, left + 12, top + 22, None);
-                let _ = LineTo(dc, left + 19, top + 29);
-                let _ = LineTo(dc, left + 33, top + 14);
+                path.move_to(12.0, 22.0);
+                path.line_to(19.0, 29.0);
+                path.line_to(33.0, 14.0);
             }
             7 => {
-                MoveToEx(dc, left + 14, top + 14, None);
-                let _ = LineTo(dc, left + 30, top + 30);
-                MoveToEx(dc, left + 30, top + 14, None);
-                let _ = LineTo(dc, left + 14, top + 30);
+                path.move_to(14.0, 14.0);
+                path.line_to(30.0, 30.0);
+                path.move_to(30.0, 14.0);
+                path.line_to(14.0, 30.0);
             }
             _ => {}
         }
-        SelectObject(dc, old_brush);
-        SelectObject(dc, old_pen);
-        DeleteObject(pen.into());
+        if index != 4 {
+            if let Some(path) = path.finish() {
+                pixmap.stroke_path(
+                    &path,
+                    &paint,
+                    &stroke,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            }
+        }
+        let mut bgra = pixmap.take();
+        for pixel in bgra.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: 44,
+                biHeight: -44,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        StretchDIBits(
+            dc,
+            left,
+            top,
+            44,
+            44,
+            0,
+            0,
+            44,
+            44,
+            Some(bgra.as_ptr().cast()),
+            &info,
+            DIB_RGB_COLORS,
+            SRCCOPY,
+        );
+    }
+
+    fn composite_vector_annotations(frame_bgra: &mut [u8], state: &SelectorState) {
+        let Some(selection) = state.selection else {
+            return;
+        };
+        if selection.width <= 0 || selection.height <= 0 {
+            return;
+        }
+        let mut annotations: Vec<NativeAnnotation> = state
+            .annotations
+            .iter()
+            .copied()
+            .filter(|annotation| !matches!(annotation, NativeAnnotation::Text { .. }))
+            .collect();
+        if let Some(Interaction::Annotate { start, tool }) = state.interaction {
+            let (end_x, end_y) = state.cursor_position;
+            let draft = match tool {
+                AnnotationTool::Rectangle => Some(NativeAnnotation::Rectangle {
+                    start_x: start.0,
+                    start_y: start.1,
+                    end_x,
+                    end_y,
+                    stroke_width: 4,
+                    color: state.current_color,
+                }),
+                AnnotationTool::Ellipse => Some(NativeAnnotation::Ellipse {
+                    start_x: start.0,
+                    start_y: start.1,
+                    end_x,
+                    end_y,
+                    stroke_width: 4,
+                    color: state.current_color,
+                }),
+                AnnotationTool::Arrow => Some(NativeAnnotation::Arrow {
+                    start_x: start.0,
+                    start_y: start.1,
+                    end_x,
+                    end_y,
+                    stroke_width: 4,
+                    control_x: (start.0 + end_x) / 2,
+                    control_y: (start.1 + end_y) / 2,
+                    color: state.current_color,
+                }),
+                AnnotationTool::Text => None,
+            };
+            if let Some(draft) = draft {
+                annotations.push(draft);
+            }
+        }
+        if annotations.is_empty() {
+            return;
+        }
+        let mut overlay = vec![0u8; (selection.width * selection.height * 4) as usize];
+        apply_native_annotations(&mut overlay, selection, &annotations);
+        for local_y in 0..selection.height {
+            let global_y = selection.y + local_y;
+            if global_y < 0 || global_y >= state.height {
+                continue;
+            }
+            for local_x in 0..selection.width {
+                let global_x = selection.x + local_x;
+                if global_x < 0 || global_x >= state.width {
+                    continue;
+                }
+                let source = ((local_y * selection.width + local_x) * 4) as usize;
+                let alpha = u16::from(overlay[source + 3]);
+                if alpha == 0 {
+                    continue;
+                }
+                let destination = ((global_y * state.width + global_x) * 4) as usize;
+                // tiny-skia stores premultiplied RGBA; the selector frame is opaque BGRA.
+                frame_bgra[destination] = (u16::from(overlay[source + 2])
+                    + u16::from(frame_bgra[destination]) * (255 - alpha) / 255)
+                    .min(255) as u8;
+                frame_bgra[destination + 1] = (u16::from(overlay[source + 1])
+                    + u16::from(frame_bgra[destination + 1]) * (255 - alpha) / 255)
+                    .min(255) as u8;
+                frame_bgra[destination + 2] = (u16::from(overlay[source])
+                    + u16::from(frame_bgra[destination + 2]) * (255 - alpha) / 255)
+                    .min(255) as u8;
+                frame_bgra[destination + 3] = 255;
+            }
+        }
     }
 
     unsafe fn draw_native_annotations(
         dc: windows::Win32::Graphics::Gdi::HDC,
         state: &SelectorState,
     ) {
-        for annotation in &state.annotations {
-            draw_native_annotation(dc, *annotation);
-        }
-        if let Some(Interaction::Annotate { start, tool }) = state.interaction {
-            let (end_x, end_y) = state.cursor_position;
-            draw_native_annotation(
-                dc,
-                match tool {
-                    AnnotationTool::Rectangle => NativeAnnotation::Rectangle {
-                        start_x: start.0,
-                        start_y: start.1,
-                        end_x,
-                        end_y,
-                        stroke_width: 4,
-                        color: state.current_color,
-                    },
-                    AnnotationTool::Ellipse => NativeAnnotation::Ellipse {
-                        start_x: start.0,
-                        start_y: start.1,
-                        end_x,
-                        end_y,
-                        stroke_width: 4,
-                        color: state.current_color,
-                    },
-                    AnnotationTool::Arrow => NativeAnnotation::Arrow {
-                        start_x: start.0,
-                        start_y: start.1,
-                        end_x,
-                        end_y,
-                        stroke_width: 4,
-                        control_x: (start.0 + end_x) / 2,
-                        control_y: (start.1 + end_y) / 2,
-                        color: state.current_color,
-                    },
-                    AnnotationTool::Text => unreachable!(),
-                },
-            );
+        for (index, annotation) in state.annotations.iter().enumerate() {
+            if state
+                .text_input
+                .as_ref()
+                .and_then(|input| input.editing_index)
+                == Some(index)
+            {
+                continue;
+            }
+            if matches!(annotation, NativeAnnotation::Text { .. }) {
+                draw_native_annotation(dc, *annotation);
+            }
         }
         if let Some(input) = state.text_input.as_ref() {
             let mut text = [0u16; 32];
@@ -2186,9 +2395,9 @@ mod platform {
                     y: input.y,
                     text,
                     length,
-                    font_size: 24,
-                    color: state.current_color,
-                    outline_color: state.text_outline_color,
+                    font_size: input.font_size,
+                    color: input.color,
+                    outline_color: input.outline_color,
                 },
             );
         }
@@ -2201,6 +2410,22 @@ mod platform {
         dc: windows::Win32::Graphics::Gdi::HDC,
         annotation: NativeAnnotation,
     ) {
+        if matches!(annotation, NativeAnnotation::Text { .. }) {
+            let bounds = native_annotation_bounds(annotation);
+            let outline = CreatePen(PS_DOT, 1, COLORREF(0x00D9_7418));
+            let previous_pen = SelectObject(dc, outline.into());
+            let previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            Rectangle(
+                dc,
+                bounds.x,
+                bounds.y,
+                bounds.x + bounds.width,
+                bounds.y + bounds.height,
+            );
+            SelectObject(dc, previous_brush);
+            SelectObject(dc, previous_pen);
+            DeleteObject(outline.into());
+        }
         let brush = CreateSolidBrush(COLORREF(0x00FF_FFFF));
         let pen = CreatePen(PS_SOLID, 2, COLORREF(0x00AA_6917));
         let old_brush = SelectObject(dc, brush.into());
@@ -2300,8 +2525,26 @@ mod platform {
                 length,
                 color,
                 outline_color,
-                ..
+                font_size,
             } => {
+                let family: Vec<u16> = "Microsoft JhengHei\0".encode_utf16().collect();
+                let font = CreateFontW(
+                    -font_size.clamp(8, 160),
+                    0,
+                    0,
+                    0,
+                    400,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    5,
+                    0,
+                    PCWSTR(family.as_ptr()),
+                );
+                let old_font = SelectObject(dc, font.into());
                 SetBkMode(dc, TRANSPARENT);
                 let slice = &text[..length.min(text.len())];
                 SetTextColor(dc, COLORREF(outline_color));
@@ -2310,6 +2553,8 @@ mod platform {
                 }
                 SetTextColor(dc, COLORREF(color));
                 TextOutW(dc, x, y, slice);
+                SelectObject(dc, old_font);
+                DeleteObject(font.into());
             }
         }
     }
@@ -2388,7 +2633,15 @@ mod platform {
                 control_y,
                 ..
             } => vec![(start_x, start_y), (control_x, control_y), (end_x, end_y)],
-            NativeAnnotation::Text { .. } => Vec::new(),
+            NativeAnnotation::Text { .. } => {
+                let bounds = native_annotation_bounds(annotation);
+                vec![
+                    (bounds.x, bounds.y),
+                    (bounds.x + bounds.width, bounds.y),
+                    (bounds.x + bounds.width, bounds.y + bounds.height),
+                    (bounds.x, bounds.y + bounds.height),
+                ]
+            }
         }
     }
 
@@ -2439,7 +2692,13 @@ mod platform {
                         ((end_x, end_y), AnnotationHandle::End),
                         ((control_x, control_y), AnnotationHandle::Curve),
                     ],
-                    NativeAnnotation::Text { .. } => Vec::new(),
+                    NativeAnnotation::Text { .. } => {
+                        let bounds = native_annotation_bounds(*annotation);
+                        vec![(
+                            (bounds.x + bounds.width, bounds.y + bounds.height),
+                            AnnotationHandle::End,
+                        )]
+                    }
                 };
                 handles.into_iter().find_map(|((x, y), handle)| {
                     ((point.0 - x).abs() <= 9 && (point.1 - y).abs() <= 9)
@@ -2573,7 +2832,29 @@ mod platform {
                     color,
                 }
             }
-            text @ NativeAnnotation::Text { .. } => text,
+            NativeAnnotation::Text {
+                x,
+                y,
+                text,
+                length,
+                font_size,
+                color,
+                outline_color,
+            } => {
+                let new_size = match handle {
+                    AnnotationHandle::Start => font_size,
+                    _ => (point.1 - y).abs().clamp(8, 160),
+                };
+                NativeAnnotation::Text {
+                    x,
+                    y,
+                    text,
+                    length,
+                    font_size: new_size,
+                    color,
+                    outline_color,
+                }
+            }
         }
     }
 
@@ -2614,7 +2895,9 @@ mod platform {
                 return IDC_SIZEALL;
             }
         }
-        if state.selection.is_none() || state.annotation_tool.is_some() {
+        if matches!(state.annotation_tool, Some(AnnotationTool::Text)) {
+            IDC_IBEAM
+        } else if state.selection.is_none() || state.annotation_tool.is_some() {
             IDC_CROSS
         } else {
             IDC_ARROW
