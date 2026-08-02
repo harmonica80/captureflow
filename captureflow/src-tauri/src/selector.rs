@@ -305,26 +305,100 @@ fn apply_native_annotations(
                 end_x,
                 end_y,
             } => {
-                let x1 = start_x - selection.x;
-                let y1 = start_y - selection.y;
-                let x2 = end_x - selection.x;
-                let y2 = end_y - selection.y;
-                draw_rgba_line(pixels, selection.width, selection.height, x1, y1, x2, y2, 4);
-                let angle = ((y2 - y1) as f64).atan2((x2 - x1) as f64);
-                for offset in [-0.55_f64, 0.55_f64] {
-                    let head_x = x2 - (24.0 * (angle + offset).cos()).round() as i32;
-                    let head_y = y2 - (24.0 * (angle + offset).sin()).round() as i32;
-                    draw_rgba_line(
-                        pixels,
-                        selection.width,
-                        selection.height,
-                        x2,
-                        y2,
-                        head_x,
-                        head_y,
-                        4,
-                    );
+                let points = tapered_arrow_points(
+                    start_x - selection.x,
+                    start_y - selection.y,
+                    end_x - selection.x,
+                    end_y - selection.y,
+                    4.0,
+                );
+                fill_rgba_polygon(pixels, selection.width, selection.height, &points);
+            }
+        }
+    }
+}
+
+fn tapered_arrow_points(x1: i32, y1: i32, x2: i32, y2: i32, stroke_width: f64) -> Vec<(i32, i32)> {
+    let dx = f64::from(x2 - x1);
+    let dy = f64::from(y2 - y1);
+    let length = dx.hypot(dy).max(1.0);
+    let (ux, uy) = (dx / length, dy / length);
+    let (px, py) = (-uy, ux);
+    let head_length = (length * 0.45).min(stroke_width * 6.0);
+    let (neck_x, neck_y) = (
+        f64::from(x2) - ux * head_length,
+        f64::from(y2) - uy * head_length,
+    );
+    let tail_half = (stroke_width * 0.22).max(0.7);
+    let neck_half = stroke_width * 1.15;
+    let head_half = stroke_width * 3.5;
+    [
+        (
+            f64::from(x1) + px * tail_half,
+            f64::from(y1) + py * tail_half,
+        ),
+        (neck_x + px * neck_half, neck_y + py * neck_half),
+        (neck_x + px * head_half, neck_y + py * head_half),
+        (f64::from(x2), f64::from(y2)),
+        (neck_x - px * head_half, neck_y - py * head_half),
+        (neck_x - px * neck_half, neck_y - py * neck_half),
+        (
+            f64::from(x1) - px * tail_half,
+            f64::from(y1) - py * tail_half,
+        ),
+    ]
+    .into_iter()
+    .map(|(x, y)| (x.round() as i32, y.round() as i32))
+    .collect()
+}
+
+fn fill_rgba_polygon(pixels: &mut [u8], width: i32, height: i32, points: &[(i32, i32)]) {
+    if points.len() < 3 || width <= 0 || height <= 0 {
+        return;
+    }
+    let min_x = points
+        .iter()
+        .map(|p| p.0)
+        .min()
+        .unwrap_or(0)
+        .clamp(0, width - 1);
+    let max_x = points
+        .iter()
+        .map(|p| p.0)
+        .max()
+        .unwrap_or(0)
+        .clamp(0, width - 1);
+    let min_y = points
+        .iter()
+        .map(|p| p.1)
+        .min()
+        .unwrap_or(0)
+        .clamp(0, height - 1);
+    let max_y = points
+        .iter()
+        .map(|p| p.1)
+        .max()
+        .unwrap_or(0)
+        .clamp(0, height - 1);
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let mut inside = false;
+            let mut previous = points.len() - 1;
+            for current in 0..points.len() {
+                let (xi, yi) = points[current];
+                let (xj, yj) = points[previous];
+                if (yi > y) != (yj > y)
+                    && f64::from(x)
+                        < f64::from(xj - xi) * f64::from(y - yi) / f64::from(yj - yi)
+                            + f64::from(xi)
+                {
+                    inside = !inside;
                 }
+                previous = current;
+            }
+            if inside {
+                let index = ((y * width + x) * 4) as usize;
+                pixels[index..index + 4].copy_from_slice(&[255, 59, 48, 255]);
             }
         }
     }
@@ -444,13 +518,13 @@ mod platform {
     use windows::{
         core::w,
         Win32::{
-            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
+            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
             Graphics::Gdi::{
-                BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
-                GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, RoundRect,
-                SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
-                BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID,
-                SRCCOPY, TRANSPARENT,
+                BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen,
+                CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect, GetStockObject,
+                InvalidateRect, LineTo, MoveToEx, Polygon, Rectangle, RoundRect, SelectObject,
+                SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
+                BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -464,9 +538,9 @@ mod platform {
                     GetWindow, GetWindowRect, IsIconic, IsWindowVisible, LoadCursorW, PostMessageW,
                     PostQuitMessage, RegisterClassW, SetForegroundWindow, ShowWindow,
                     TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
-                    IDC_CROSS, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_KEYDOWN,
-                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW,
-                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    IDC_CROSS, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
+                    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+                    WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -920,6 +994,7 @@ mod platform {
                 paint(hwnd);
                 LRESULT(0)
             }
+            WM_ERASEBKGND => LRESULT(1),
             WM_DESTROY => {
                 finish(None);
                 PostQuitMessage(0);
@@ -931,9 +1006,12 @@ mod platform {
 
     unsafe fn paint(hwnd: HWND) {
         let mut paint = PAINTSTRUCT::default();
-        let dc = BeginPaint(hwnd, &mut paint);
+        let screen_dc = BeginPaint(hwnd, &mut paint);
         if let Ok(mut guard) = STATE.lock() {
             if let Some(state) = guard.as_mut() {
+                let dc = CreateCompatibleDC(Some(screen_dc));
+                let bitmap = CreateCompatibleBitmap(screen_dc, state.width, state.height);
+                let old_bitmap = SelectObject(dc, bitmap.into());
                 let visible_rect = state
                     .selection
                     .or(state.hover_candidate)
@@ -1054,6 +1132,20 @@ mod platform {
                 }
                 draw_native_annotations(dc, state);
                 draw_magnifier(dc, state);
+                let _ = BitBlt(
+                    screen_dc,
+                    0,
+                    0,
+                    state.width,
+                    state.height,
+                    Some(dc),
+                    0,
+                    0,
+                    SRCCOPY,
+                );
+                SelectObject(dc, old_bitmap);
+                DeleteObject(bitmap.into());
+                let _ = DeleteDC(dc);
             }
         }
         EndPaint(hwnd, &paint);
@@ -1309,9 +1401,7 @@ mod platform {
             10,
             10,
         );
-        let labels = ["□", "↗", "↶", "✓", "×"];
-        SetBkMode(dc, TRANSPARENT);
-        for (index, label) in labels.iter().enumerate() {
+        for index in 0..5 {
             let left = toolbar.left + index as i32 * 44;
             let selected = matches!(
                 (index, state.annotation_tool),
@@ -1328,9 +1418,15 @@ mod platform {
                 FillRect(dc, &area, brush);
                 DeleteObject(brush.into());
             }
-            SetTextColor(dc, COLORREF(0x0025_1B07));
-            let text: Vec<u16> = label.encode_utf16().collect();
-            TextOutW(dc, left + 15, toolbar.top + 13, &text);
+            if index > 0 {
+                let separator = CreatePen(PS_SOLID, 1, COLORREF(0x00D5_D5D5));
+                let previous_pen = SelectObject(dc, separator.into());
+                MoveToEx(dc, left, toolbar.top + 9, None);
+                let _ = LineTo(dc, left, toolbar.bottom - 9);
+                SelectObject(dc, previous_pen);
+                DeleteObject(separator.into());
+            }
+            draw_toolbar_icon(dc, index, left, toolbar.top);
         }
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
@@ -1338,13 +1434,61 @@ mod platform {
         DeleteObject(background.into());
     }
 
+    unsafe fn draw_toolbar_icon(
+        dc: windows::Win32::Graphics::Gdi::HDC,
+        index: usize,
+        left: i32,
+        top: i32,
+    ) {
+        let pen = CreatePen(PS_SOLID, 2, COLORREF(0x0025_2525));
+        let old_pen = SelectObject(dc, pen.into());
+        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        match index {
+            0 => {
+                Rectangle(dc, left + 13, top + 12, left + 31, top + 31);
+            }
+            1 => {
+                let points: Vec<POINT> =
+                    tapered_arrow_points(left + 12, top + 31, left + 32, top + 11, 2.5)
+                        .into_iter()
+                        .map(|(x, y)| POINT { x, y })
+                        .collect();
+                let brush = CreateSolidBrush(COLORREF(0x0025_2525));
+                let previous_brush = SelectObject(dc, brush.into());
+                Polygon(dc, &points);
+                SelectObject(dc, previous_brush);
+                DeleteObject(brush.into());
+            }
+            2 => {
+                MoveToEx(dc, left + 30, top + 14, None);
+                let _ = LineTo(dc, left + 20, top + 14);
+                let _ = LineTo(dc, left + 14, top + 20);
+                let _ = LineTo(dc, left + 20, top + 26);
+                MoveToEx(dc, left + 15, top + 20, None);
+                let _ = LineTo(dc, left + 30, top + 20);
+                let _ = LineTo(dc, left + 33, top + 25);
+            }
+            3 => {
+                MoveToEx(dc, left + 12, top + 22, None);
+                let _ = LineTo(dc, left + 19, top + 29);
+                let _ = LineTo(dc, left + 33, top + 14);
+            }
+            _ => {
+                MoveToEx(dc, left + 14, top + 14, None);
+                let _ = LineTo(dc, left + 30, top + 30);
+                MoveToEx(dc, left + 30, top + 14, None);
+                let _ = LineTo(dc, left + 14, top + 30);
+            }
+        }
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(pen.into());
+    }
+
     unsafe fn draw_native_annotations(
         dc: windows::Win32::Graphics::Gdi::HDC,
         state: &SelectorState,
     ) {
-        let pen = CreatePen(PS_SOLID, 4, COLORREF(0x0030_3BFF));
-        let old_pen = SelectObject(dc, pen.into());
-        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
         for annotation in &state.annotations {
             draw_native_annotation(dc, *annotation);
         }
@@ -1368,9 +1512,6 @@ mod platform {
                 },
             );
         }
-        SelectObject(dc, old_brush);
-        SelectObject(dc, old_pen);
-        DeleteObject(pen.into());
     }
 
     unsafe fn draw_native_annotation(
@@ -1384,6 +1525,9 @@ mod platform {
                 end_x,
                 end_y,
             } => {
+                let pen = CreatePen(PS_SOLID, 4, COLORREF(0x0030_3BFF));
+                let old_pen = SelectObject(dc, pen.into());
+                let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
                 Rectangle(
                     dc,
                     start_x.min(end_x),
@@ -1391,6 +1535,9 @@ mod platform {
                     start_x.max(end_x),
                     start_y.max(end_y),
                 );
+                SelectObject(dc, old_brush);
+                SelectObject(dc, old_pen);
+                DeleteObject(pen.into());
             }
             NativeAnnotation::Arrow {
                 start_x,
@@ -1398,15 +1545,17 @@ mod platform {
                 end_x,
                 end_y,
             } => {
-                MoveToEx(dc, start_x, start_y, None);
-                let _ = LineTo(dc, end_x, end_y);
-                let angle = ((end_y - start_y) as f64).atan2((end_x - start_x) as f64);
-                for offset in [-0.55_f64, 0.55_f64] {
-                    MoveToEx(dc, end_x, end_y, None);
-                    let x = end_x - (24.0_f64 * (angle + offset).cos()).round() as i32;
-                    let y = end_y - (24.0_f64 * (angle + offset).sin()).round() as i32;
-                    let _ = LineTo(dc, x, y);
-                }
+                let points: Vec<POINT> = tapered_arrow_points(start_x, start_y, end_x, end_y, 4.0)
+                    .into_iter()
+                    .map(|(x, y)| POINT { x, y })
+                    .collect();
+                let brush = CreateSolidBrush(COLORREF(0x0030_3BFF));
+                let old_brush = SelectObject(dc, brush.into());
+                let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                Polygon(dc, &points);
+                SelectObject(dc, old_pen);
+                SelectObject(dc, old_brush);
+                DeleteObject(brush.into());
             }
         }
     }
