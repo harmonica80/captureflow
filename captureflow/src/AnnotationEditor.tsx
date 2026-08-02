@@ -5,40 +5,55 @@ import { useEffect, useRef, useState } from "react";
 type Point = { x: number; y: number };
 type Tool = "select" | "rectangle" | "arrow";
 type Annotation =
-  | { id: string; type: "rectangle"; x: number; y: number; width: number; height: number; color: string; strokeWidth: number }
-  | { id: string; type: "arrow"; x1: number; y1: number; x2: number; y2: number; color: string; strokeWidth: number };
-type Interaction = { id: string; mode: "move" | "nw" | "ne" | "sw" | "se" | "start" | "end"; origin: Point; object: Annotation };
+  | { id: string; type: "rectangle"; x: number; y: number; width: number; height: number; radius?: number; color: string; strokeWidth: number }
+  | { id: string; type: "arrow"; x1: number; y1: number; x2: number; y2: number; cx?: number; cy?: number; color: string; strokeWidth: number };
+type Interaction = { id: string; mode: "move" | "nw" | "ne" | "sw" | "se" | "start" | "end" | "curve" | "radius"; origin: Point; object: Annotation };
 type Project = { schemaVersion: number; sourceImage: string; canvasWidth: number; canvasHeight: number; objects: Annotation[] };
 type Props = { imagePath: string; width: number; height: number; onClose: () => void };
 
-function arrowPolygon(x1: number, y1: number, x2: number, y2: number, strokeWidth: number) {
+function arrowPolygon(x1: number, y1: number, x2: number, y2: number, strokeWidth: number, cx = (x1 + x2) / 2, cy = (y1 + y2) / 2) {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const length = Math.max(1, Math.hypot(dx, dy));
-  const ux = dx / length;
-  const uy = dy / length;
-  const px = -uy;
-  const py = ux;
   const headLength = Math.min(length * 0.45, strokeWidth * 6);
-  const neckX = x2 - ux * headLength;
-  const neckY = y2 - uy * headLength;
   const tailHalf = Math.max(0.7, strokeWidth * 0.22);
   const neckHalf = strokeWidth * 1.15;
   const headHalf = strokeWidth * 3.5;
-  return [
-    [x1 + px * tailHalf, y1 + py * tailHalf], [neckX + px * neckHalf, neckY + py * neckHalf],
-    [neckX + px * headHalf, neckY + py * headHalf], [x2, y2],
-    [neckX - px * headHalf, neckY - py * headHalf], [neckX - px * neckHalf, neckY - py * neckHalf],
-    [x1 - px * tailHalf, y1 - py * tailHalf],
-  ].map(([x, y]) => `${x},${y}`).join(" ");
+  const endTangentX = x2 - cx;
+  const endTangentY = y2 - cy;
+  const endTangentLength = Math.max(1, Math.hypot(endTangentX, endTangentY));
+  const ux = endTangentX / endTangentLength;
+  const uy = endTangentY / endTangentLength;
+  const px = -uy;
+  const py = ux;
+  const neckX = x2 - ux * headLength;
+  const neckY = y2 - uy * headLength;
+  const left: number[][] = [];
+  const right: number[][] = [];
+  for (let index = 0; index <= 12; index += 1) {
+    const t = index / 12;
+    const inverse = 1 - t;
+    const x = inverse * inverse * x1 + 2 * inverse * t * cx + t * t * neckX;
+    const y = inverse * inverse * y1 + 2 * inverse * t * cy + t * t * neckY;
+    const tx = 2 * inverse * (cx - x1) + 2 * t * (neckX - cx);
+    const ty = 2 * inverse * (cy - y1) + 2 * t * (neckY - cy);
+    const tangentLength = Math.max(1, Math.hypot(tx, ty));
+    const half = tailHalf + (neckHalf - tailHalf) * t;
+    left.push([x - ty / tangentLength * half, y + tx / tangentLength * half]);
+    right.push([x + ty / tangentLength * half, y - tx / tangentLength * half]);
+  }
+  return [...left, [neckX + px * headHalf, neckY + py * headHalf], [x2, y2], [neckX - px * headHalf, neckY - py * headHalf], ...right.reverse()]
+    .map(([x, y]) => `${x},${y}`).join(" ");
 }
 
 function movedObject(object: Annotation, mode: Interaction["mode"], dx: number, dy: number): Annotation {
   if (object.type === "arrow") {
     if (mode === "start") return { ...object, x1: object.x1 + dx, y1: object.y1 + dy };
     if (mode === "end") return { ...object, x2: object.x2 + dx, y2: object.y2 + dy };
-    return { ...object, x1: object.x1 + dx, y1: object.y1 + dy, x2: object.x2 + dx, y2: object.y2 + dy };
+    if (mode === "curve") return { ...object, cx: (object.cx ?? (object.x1 + object.x2) / 2) + dx, cy: (object.cy ?? (object.y1 + object.y2) / 2) + dy };
+    return { ...object, x1: object.x1 + dx, y1: object.y1 + dy, x2: object.x2 + dx, y2: object.y2 + dy, cx: (object.cx ?? (object.x1 + object.x2) / 2) + dx, cy: (object.cy ?? (object.y1 + object.y2) / 2) + dy };
   }
+  if (mode === "radius") return { ...object, radius: Math.max(0, Math.min(Math.min(object.width, object.height) / 2, (object.radius ?? 0) + Math.max(dx, dy))) };
   if (mode === "move") return { ...object, x: object.x + dx, y: object.y + dy };
   const left = mode === "nw" || mode === "sw" ? object.x + dx : object.x;
   const right = mode === "ne" || mode === "se" ? object.x + object.width + dx : object.x + object.width;
@@ -61,6 +76,20 @@ export default function AnnotationEditor({ imagePath, width, height, onClose }: 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    function deleteSelected(event: KeyboardEvent) {
+      if ((event.key !== "Delete" && event.key !== "Backspace") || !selectedId) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      recordChange(objects);
+      setObjects((items) => items.filter((item) => item.id !== selectedId));
+      setSelectedId(null);
+    }
+    window.addEventListener("keydown", deleteSelected);
+    return () => window.removeEventListener("keydown", deleteSelected);
+  }, [objects, selectedId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,14 +146,15 @@ export default function AnnotationEditor({ imagePath, width, height, onClose }: 
     if (Math.hypot(end.x - start.x, end.y - start.y) >= 3) {
       const id = `${Date.now()}-${objects.length}`;
       const next: Annotation = tool === "rectangle"
-        ? { id, type: "rectangle", x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y), color: "#ff3b30", strokeWidth: 4 }
-        : { id, type: "arrow", x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: "#ff3b30", strokeWidth: 4 };
+        ? { id, type: "rectangle", x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y), radius: 0, color: "#ff3b30", strokeWidth: 4 }
+        : { id, type: "arrow", x1: start.x, y1: start.y, x2: end.x, y2: end.y, cx: (start.x + end.x) / 2, cy: (start.y + end.y) / 2, color: "#ff3b30", strokeWidth: 4 };
       recordChange(objects); setObjects([...objects, next]); setSelectedId(next.id);
     }
     setStart(null); setCurrent(null);
   }
   function undo() { const previous = undoStack[undoStack.length - 1]; if (!previous) return; setRedoStack((items) => [...items, objects]); setObjects(previous); setUndoStack((items) => items.slice(0, -1)); setSelectedId(null); }
   function redoLast() { const next = redoStack[redoStack.length - 1]; if (!next) return; setUndoStack((items) => [...items, objects]); setObjects(next); setRedoStack((items) => items.slice(0, -1)); setSelectedId(null); }
+  function removeSelected() { if (!selectedId) return; recordChange(objects); setObjects(objects.filter((item) => item.id !== selectedId)); setSelectedId(null); }
   async function loadProject() {
     setError(""); setMessage("");
     try {
@@ -150,7 +180,7 @@ export default function AnnotationEditor({ imagePath, width, height, onClose }: 
         <button className={tool === "select" ? "selected" : ""} aria-pressed={tool === "select"} onClick={() => setTool("select")}>⌖ 選取</button>
         <button className={tool === "rectangle" ? "selected" : ""} aria-pressed={tool === "rectangle"} onClick={() => setTool("rectangle")}>▭ 矩形</button>
         <button className={tool === "arrow" ? "selected" : ""} aria-pressed={tool === "arrow"} onClick={() => setTool("arrow")}>↗ 箭頭</button>
-        <button onClick={undo} disabled={undoStack.length === 0}>↶ 復原</button><button onClick={redoLast} disabled={redoStack.length === 0}>↷ 重做</button>
+        <button onClick={undo} disabled={undoStack.length === 0}>↶ 復原</button><button onClick={redoLast} disabled={redoStack.length === 0}>↷ 重做</button><button onClick={removeSelected} disabled={!selectedId}>⌫ 刪除選取</button>
         <button onClick={() => { recordChange(objects); setObjects([]); setSelectedId(null); }} disabled={objects.length === 0}>清除全部</button>
         <button onClick={loadProject}>重新開啟最近專案</button><button className="save" onClick={saveProject} disabled={saving}>{saving ? "儲存中…" : "儲存可編輯專案"}</button>
       </div>
@@ -158,10 +188,10 @@ export default function AnnotationEditor({ imagePath, width, height, onClose }: 
       <div className="annotation-stage" style={{ aspectRatio: `${width} / ${height}` }}><canvas ref={canvasRef} width={width} height={height} aria-label="截圖底圖" />
         {!loading && <svg className={tool === "select" ? "selecting" : "drawing"} viewBox={`0 0 ${width} ${height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} aria-label="標註畫布">
           {objects.map((object) => object.type === "rectangle"
-            ? <rect key={object.id} x={object.x} y={object.y} width={object.width} height={object.height} fill="transparent" stroke={object.color} strokeWidth={object.strokeWidth} onPointerDown={(event) => beginInteraction(event, object, "move")} />
-            : <polygon key={object.id} points={arrowPolygon(object.x1, object.y1, object.x2, object.y2, object.strokeWidth)} fill={object.color} stroke="transparent" strokeWidth="14" onPointerDown={(event) => beginInteraction(event, object, "move")} />)}
-          {selected?.type === "rectangle" && <g aria-label="已選取矩形"><rect className="annotation-selection" x={selected.x - 3} y={selected.y - 3} width={selected.width + 6} height={selected.height + 6} />{handle(selected.x, selected.y, "nw", selected)}{handle(selected.x + selected.width, selected.y, "ne", selected)}{handle(selected.x, selected.y + selected.height, "sw", selected)}{handle(selected.x + selected.width, selected.y + selected.height, "se", selected)}</g>}
-          {selected?.type === "arrow" && <g aria-label="已選取箭頭"><line className="annotation-selection" x1={selected.x1} y1={selected.y1} x2={selected.x2} y2={selected.y2} />{handle(selected.x1, selected.y1, "start", selected)}{handle(selected.x2, selected.y2, "end", selected)}</g>}
+            ? <rect key={object.id} x={object.x} y={object.y} width={object.width} height={object.height} rx={object.radius ?? 0} fill="transparent" stroke={object.color} strokeWidth={object.strokeWidth} onPointerDown={(event) => beginInteraction(event, object, "move")} />
+            : <polygon key={object.id} points={arrowPolygon(object.x1, object.y1, object.x2, object.y2, object.strokeWidth, object.cx, object.cy)} fill={object.color} stroke="transparent" strokeWidth="14" onPointerDown={(event) => beginInteraction(event, object, "move")} />)}
+          {selected?.type === "rectangle" && <g aria-label="已選取矩形"><rect className="annotation-selection" x={selected.x - 3} y={selected.y - 3} width={selected.width + 6} height={selected.height + 6} rx={selected.radius ?? 0} />{handle(selected.x, selected.y, "nw", selected)}{handle(selected.x + selected.width, selected.y, "ne", selected)}{handle(selected.x, selected.y + selected.height, "sw", selected)}{handle(selected.x + selected.width, selected.y + selected.height, "se", selected)}<circle className="annotation-radius-handle" cx={selected.x + Math.max(12, selected.radius ?? 0)} cy={selected.y + Math.max(12, selected.radius ?? 0)} r="6" onPointerDown={(event) => beginInteraction(event, selected, "radius")} /></g>}
+          {selected?.type === "arrow" && <g aria-label="已選取箭頭"><path className="annotation-selection" d={`M ${selected.x1} ${selected.y1} Q ${selected.cx ?? (selected.x1 + selected.x2) / 2} ${selected.cy ?? (selected.y1 + selected.y2) / 2} ${selected.x2} ${selected.y2}`} />{handle(selected.x1, selected.y1, "start", selected)}{handle(selected.x2, selected.y2, "end", selected)}<circle className="annotation-curve-handle" cx={selected.cx ?? (selected.x1 + selected.x2) / 2} cy={selected.cy ?? (selected.y1 + selected.y2) / 2} r="7" onPointerDown={(event) => beginInteraction(event, selected, "curve")} /></g>}
           {draft && tool === "rectangle" && <rect x={Math.min(draft.start.x, draft.end.x)} y={Math.min(draft.start.y, draft.end.y)} width={Math.abs(draft.end.x - draft.start.x)} height={Math.abs(draft.end.y - draft.start.y)} fill="none" stroke="#ff3b30" strokeWidth="4" strokeDasharray="10 6" />}
           {draft && tool === "arrow" && <polygon points={arrowPolygon(draft.start.x, draft.start.y, draft.end.x, draft.end.y, 4)} fill="#ff3b30" opacity="0.82" />}
         </svg>}{loading && <div className="annotation-loading">正在載入底圖…</div>}</div>

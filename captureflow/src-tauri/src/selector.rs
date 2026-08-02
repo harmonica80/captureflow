@@ -1,5 +1,5 @@
 use crate::capture::{capture_frame, MonitorInfo, RectInfo};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, time::SystemTime};
 use tauri::{AppHandle, Manager};
 
@@ -11,6 +11,14 @@ pub struct SelectionSnapshot {
     pub selection: RectInfo,
     pub width: i32,
     pub height: i32,
+    pub corner_radius: i32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectedArea {
+    selection: RectInfo,
+    corner_radius: i32,
 }
 
 #[derive(Serialize)]
@@ -21,6 +29,7 @@ struct SelectionMetadata<'a> {
     virtual_desktop: RectInfo,
     selection: RectInfo,
     monitors: &'a [MonitorInfo],
+    corner_radius: i32,
 }
 
 pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, String> {
@@ -34,22 +43,30 @@ pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, St
     .await
     .map_err(|error| format!("選取執行緒異常結束：{error}"))??;
 
-    let Some(local_selection) = selected else {
+    let Some(selected) = selected else {
         return Ok(None);
     };
+    let local_selection = selected.selection;
     let global_selection = RectInfo {
         x: virtual_desktop.x + local_selection.x,
         y: virtual_desktop.y + local_selection.y,
         width: local_selection.width,
         height: local_selection.height,
     };
-    let snapshot = save_selection(&app, &frame, local_selection, global_selection)?;
-    save_last_selection(&app, global_selection)?;
+    let snapshot = save_selection(
+        &app,
+        &frame,
+        local_selection,
+        global_selection,
+        selected.corner_radius,
+    )?;
+    save_last_selection(&app, global_selection, selected.corner_radius)?;
     Ok(Some(snapshot))
 }
 
 pub fn repeat_last_area(app: AppHandle) -> Result<SelectionSnapshot, String> {
-    let global_selection = load_last_selection(&app)?;
+    let previous = load_last_selection(&app)?;
+    let global_selection = previous.selection;
     let frame = capture_frame()?;
     let local_selection = RectInfo {
         x: global_selection.x - frame.virtual_desktop.x,
@@ -57,8 +74,14 @@ pub fn repeat_last_area(app: AppHandle) -> Result<SelectionSnapshot, String> {
         width: global_selection.width,
         height: global_selection.height,
     };
-    save_selection(&app, &frame, local_selection, global_selection)
-        .map_err(|error| format!("無法重複上次範圍；螢幕配置可能已變更：{error}"))
+    save_selection(
+        &app,
+        &frame,
+        local_selection,
+        global_selection,
+        previous.corner_radius,
+    )
+    .map_err(|error| format!("無法重複上次範圍；螢幕配置可能已變更：{error}"))
 }
 
 pub fn capture_monitor(app: AppHandle, device_name: &str) -> Result<SelectionSnapshot, String> {
@@ -75,8 +98,8 @@ pub fn capture_monitor(app: AppHandle, device_name: &str) -> Result<SelectionSna
         width: global_selection.width,
         height: global_selection.height,
     };
-    let snapshot = save_selection(&app, &frame, local_selection, global_selection)?;
-    save_last_selection(&app, global_selection)?;
+    let snapshot = save_selection(&app, &frame, local_selection, global_selection, 0)?;
+    save_last_selection(&app, global_selection, 0)?;
     Ok(snapshot)
 }
 
@@ -85,13 +108,20 @@ fn save_selection(
     frame: &crate::capture::DesktopFrame,
     local_selection: RectInfo,
     global_selection: RectInfo,
+    corner_radius: i32,
 ) -> Result<SelectionSnapshot, String> {
-    let cropped = crop_rgba(
+    let mut cropped = crop_rgba(
         &frame.rgba,
         frame.virtual_desktop.width,
         frame.virtual_desktop.height,
         local_selection,
     )?;
+    apply_rounded_alpha(
+        &mut cropped,
+        local_selection.width,
+        local_selection.height,
+        corner_radius,
+    );
 
     let captured_at_unix_ms = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -122,6 +152,7 @@ fn save_selection(
         virtual_desktop: frame.virtual_desktop,
         selection: global_selection,
         monitors: &frame.monitors,
+        corner_radius,
     };
     fs::write(
         &metadata_path,
@@ -136,6 +167,7 @@ fn save_selection(
         selection: global_selection,
         width: local_selection.width,
         height: local_selection.height,
+        corner_radius,
     })
 }
 
@@ -147,17 +179,24 @@ fn last_selection_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("last-selection.json"))
 }
 
-fn save_last_selection(app: &AppHandle, selection: RectInfo) -> Result<(), String> {
+fn save_last_selection(
+    app: &AppHandle,
+    selection: RectInfo,
+    corner_radius: i32,
+) -> Result<(), String> {
     let path = last_selection_path(app)?;
     fs::write(
         path,
-        serde_json::to_vec_pretty(&selection)
-            .map_err(|error| format!("無法建立上次範圍資料：{error}"))?,
+        serde_json::to_vec_pretty(&SelectedArea {
+            selection,
+            corner_radius,
+        })
+        .map_err(|error| format!("無法建立上次範圍資料：{error}"))?,
     )
     .map_err(|error| format!("無法儲存上次範圍：{error}"))
 }
 
-fn load_last_selection(app: &AppHandle) -> Result<RectInfo, String> {
+fn load_last_selection(app: &AppHandle) -> Result<SelectedArea, String> {
     let path = last_selection_path(app)?;
     let bytes = fs::read(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -166,7 +205,44 @@ fn load_last_selection(app: &AppHandle) -> Result<RectInfo, String> {
             format!("無法讀取上次範圍：{error}")
         }
     })?;
-    serde_json::from_slice(&bytes).map_err(|error| format!("上次範圍資料已損壞：{error}"))
+    if let Ok(area) = serde_json::from_slice::<SelectedArea>(&bytes) {
+        return Ok(area);
+    }
+    serde_json::from_slice::<RectInfo>(&bytes)
+        .map(|selection| SelectedArea {
+            selection,
+            corner_radius: 0,
+        })
+        .map_err(|error| format!("上次範圍資料已損壞：{error}"))
+}
+
+fn apply_rounded_alpha(pixels: &mut [u8], width: i32, height: i32, radius: i32) {
+    let radius = radius.clamp(0, width.min(height) / 2);
+    if radius == 0 {
+        return;
+    }
+    let radius_squared = i64::from(radius) * i64::from(radius);
+    for y in 0..height {
+        for x in 0..width {
+            let dx = if x < radius {
+                radius - x
+            } else if x >= width - radius {
+                x - (width - radius - 1)
+            } else {
+                0
+            };
+            let dy = if y < radius {
+                radius - y
+            } else if y >= height - radius {
+                y - (height - radius - 1)
+            } else {
+                0
+            };
+            if dx > 0 && dy > 0 && i64::from(dx * dx + dy * dy) > radius_squared {
+                pixels[((y * width + x) * 4 + 3) as usize] = 0;
+            }
+        }
+    }
 }
 
 fn crop_rgba(
@@ -204,6 +280,7 @@ fn path_string(path: PathBuf) -> String {
 
 #[cfg(windows)]
 mod platform {
+    use super::SelectedArea;
     use crate::capture::RectInfo;
     use std::{mem::size_of, sync::mpsc};
     use windows::{
@@ -212,9 +289,10 @@ mod platform {
             Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
             Graphics::Gdi::{
                 BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
-                GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, SelectObject,
-                SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER,
-                BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+                GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, RoundRect,
+                SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
+                BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID,
+                SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -229,7 +307,7 @@ mod platform {
                     PostQuitMessage, RegisterClassW, SetForegroundWindow, ShowWindow,
                     TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
                     IDC_CROSS, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_KEYDOWN,
-                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSW,
+                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW,
                     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
@@ -246,12 +324,13 @@ mod platform {
         bgra: Vec<u8>,
         dimmed_bgra: Vec<u8>,
         composite_bgra: Vec<u8>,
-        composite_rect: Option<(i32, i32, i32, i32)>,
+        composite_rect: Option<(i32, i32, i32, i32, i32)>,
         interaction: Option<Interaction>,
         selection: Option<RectInfo>,
         hover_candidate: Option<RectInfo>,
         cursor_position: (i32, i32),
-        sender: Option<mpsc::Sender<Option<RectInfo>>>,
+        corner_radius: i32,
+        sender: Option<mpsc::Sender<Option<SelectedArea>>>,
     }
 
     #[derive(Clone, Copy)]
@@ -285,7 +364,7 @@ mod platform {
     pub fn run_selector(
         virtual_desktop: RectInfo,
         mut rgba: Vec<u8>,
-    ) -> Result<Option<RectInfo>, String> {
+    ) -> Result<Option<SelectedArea>, String> {
         for pixel in rgba.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
@@ -310,6 +389,7 @@ mod platform {
             selection: None,
             hover_candidate: None,
             cursor_position: (virtual_desktop.width / 2, virtual_desktop.height / 2),
+            corner_radius: 0,
             sender: Some(sender),
         });
 
@@ -486,10 +566,34 @@ mod platform {
                             .filter(|rect| rect.width >= 2 && rect.height >= 2)
                     })
                 });
-                if selection.is_some() {
-                    finish(selection);
+                if let Some(selection) = selection {
+                    let corner_radius = STATE
+                        .lock()
+                        .ok()
+                        .and_then(|guard| guard.as_ref().map(|state| state.corner_radius))
+                        .unwrap_or(0);
+                    finish(Some(SelectedArea {
+                        selection,
+                        corner_radius,
+                    }));
                     let _ = DestroyWindow(hwnd);
                 }
+                LRESULT(0)
+            }
+            WM_MOUSEWHEEL => {
+                let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
+                if let Ok(mut guard) = STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        if let Some(rect) = state.selection {
+                            let step = if delta > 0 { 4 } else { -4 };
+                            state.corner_radius = (state.corner_radius + step)
+                                .clamp(0, rect.width.min(rect.height) / 2);
+                            state.composite_bgra.clone_from(&state.dimmed_bgra);
+                            state.composite_rect = None;
+                        }
+                    }
+                }
+                InvalidateRect(Some(hwnd), None, false);
                 LRESULT(0)
             }
             WM_KEYDOWN
@@ -579,7 +683,7 @@ mod platform {
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, COLORREF(0x00F0_FFFF));
                 let instructions: Vec<u16> =
-                    "移動游標偵測視窗 · 單擊選取 · 拖曳自由框選 · 方向鍵微調 · Enter 確認"
+                    "移動游標偵測視窗 · 拖曳自由框選 · 滾輪調整圓角 · 方向鍵微調 · Enter 確認"
                         .encode_utf16()
                         .collect();
                 TextOutW(dc, 24, 24, &instructions);
@@ -589,19 +693,21 @@ mod platform {
                         let pen = CreatePen(PS_SOLID, 3, COLORREF(0x0074_E7AD));
                         let old_pen = SelectObject(dc, pen.into());
                         let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-                        Rectangle(
+                        RoundRect(
                             dc,
                             rect.x,
                             rect.y,
                             rect.x + rect.width,
                             rect.y + rect.height,
+                            state.corner_radius * 2,
+                            state.corner_radius * 2,
                         );
                         SelectObject(dc, old_brush);
                         SelectObject(dc, old_pen);
                         DeleteObject(pen.into());
 
                         if state.selection.is_some() {
-                            let handle_brush = CreateSolidBrush(COLORREF(0x0074_E7AD));
+                            let handle_brush = CreateSolidBrush(COLORREF(0x00FF_FFFF));
                             let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
                             let old_brush = SelectObject(dc, handle_brush.into());
                             for (x, y) in handle_points(rect) {
@@ -621,6 +727,11 @@ mod platform {
                         };
                         SetTextColor(dc, COLORREF(0x00F0_FFFF));
                         TextOutW(dc, rect.x.max(8), label_y, &dimensions);
+                        if state.selection.is_some() {
+                            let radius = format!("圓角半徑 {} px · 滾輪調整", state.corner_radius);
+                            let radius: Vec<u16> = radius.encode_utf16().collect();
+                            TextOutW(dc, rect.x.max(8), label_y + 20, &radius);
+                        }
                     }
                 }
                 draw_magnifier(dc, state);
@@ -748,7 +859,7 @@ mod platform {
         DeleteObject(border_pen.into());
     }
 
-    fn finish(result: Option<RectInfo>) {
+    fn finish(result: Option<SelectedArea>) {
         if let Ok(mut guard) = STATE.lock() {
             if let Some(state) = guard.as_mut() {
                 if let Some(sender) = state.sender.take() {
@@ -893,11 +1004,11 @@ mod platform {
     }
 
     fn update_composite(state: &mut SelectorState, visible_rect: Option<RectInfo>) {
-        let next_key = visible_rect.map(rect_key);
+        let next_key = visible_rect.map(|rect| rect_key(rect, state.corner_radius));
         if state.composite_rect == next_key {
             return;
         }
-        if let Some((x, y, width, height)) = state.composite_rect {
+        if let Some((x, y, width, height, _)) = state.composite_rect {
             copy_rect_pixels(
                 &state.dimmed_bgra,
                 &mut state.composite_bgra,
@@ -911,7 +1022,13 @@ mod platform {
             );
         }
         if let Some(rect) = visible_rect {
-            copy_rect_pixels(&state.bgra, &mut state.composite_bgra, state.width, rect);
+            copy_rounded_pixels(
+                &state.bgra,
+                &mut state.composite_bgra,
+                state.width,
+                rect,
+                state.corner_radius,
+            );
         }
         state.composite_rect = next_key;
     }
@@ -925,8 +1042,45 @@ mod platform {
         }
     }
 
-    fn rect_key(rect: RectInfo) -> (i32, i32, i32, i32) {
-        (rect.x, rect.y, rect.width, rect.height)
+    fn copy_rounded_pixels(
+        source: &[u8],
+        destination: &mut [u8],
+        stride: i32,
+        rect: RectInfo,
+        radius: i32,
+    ) {
+        let radius = radius.clamp(0, rect.width.min(rect.height) / 2);
+        if radius == 0 {
+            copy_rect_pixels(source, destination, stride, rect);
+            return;
+        }
+        let radius_squared = i64::from(radius) * i64::from(radius);
+        for local_y in 0..rect.height {
+            for local_x in 0..rect.width {
+                let dx = if local_x < radius {
+                    radius - local_x
+                } else if local_x >= rect.width - radius {
+                    local_x - (rect.width - radius - 1)
+                } else {
+                    0
+                };
+                let dy = if local_y < radius {
+                    radius - local_y
+                } else if local_y >= rect.height - radius {
+                    local_y - (rect.height - radius - 1)
+                } else {
+                    0
+                };
+                if dx == 0 || dy == 0 || i64::from(dx * dx + dy * dy) <= radius_squared {
+                    let index = (((rect.y + local_y) * stride + rect.x + local_x) * 4) as usize;
+                    destination[index..index + 4].copy_from_slice(&source[index..index + 4]);
+                }
+            }
+        }
+    }
+
+    fn rect_key(rect: RectInfo, radius: i32) -> (i32, i32, i32, i32, i32) {
+        (rect.x, rect.y, rect.width, rect.height, radius)
     }
 
     unsafe fn detect_window_at(
@@ -1016,7 +1170,7 @@ mod platform {
     pub fn run_selector(
         _virtual_desktop: RectInfo,
         _rgba: Vec<u8>,
-    ) -> Result<Option<RectInfo>, String> {
+    ) -> Result<Option<super::SelectedArea>, String> {
         Err("PoC-B 目前只支援 Windows".into())
     }
 }

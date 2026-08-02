@@ -90,7 +90,9 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .annotation-stage svg.selecting { cursor: default; }
 .annotation-stage svg.selecting polygon, .annotation-stage svg.selecting > rect { cursor: move; }
 .annotation-selection { fill: none; stroke: #071b25; stroke-width: 3; stroke-dasharray: 9 5; vector-effect: non-scaling-stroke; pointer-events: none; }
-.annotation-handle { fill: #9bdcff; stroke: #071b25; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: nwse-resize; }
+.annotation-handle, .annotation-curve-handle, .annotation-radius-handle { fill: #fff; stroke: #1769aa; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.annotation-handle { cursor: nwse-resize; }
+.annotation-curve-handle, .annotation-radius-handle { cursor: grab; }
 .annotation-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f4f7f5; background: #26332e; font-weight: 700; }
 
 .roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: clamp(54px, 9vw, 110px); }
