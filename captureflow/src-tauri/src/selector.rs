@@ -470,13 +470,13 @@ mod platform {
                         let point = clamp_point(point, state.width, state.height);
                         if let Some(selection) = state.selection {
                             let button = radius_button_rect(selection, state.width, state.height);
-                            if point.0 >= button.left
-                                && point.0 <= button.right
-                                && point.1 >= button.top
-                                && point.1 <= button.bottom
+                            if point.0 >= button.left - 8
+                                && point.0 <= button.right + 8
+                                && point.1 >= button.top - 8
+                                && point.1 <= button.bottom + 8
                             {
                                 state.corner_radius = if state.corner_radius == 0 {
-                                    16.min(selection.width.min(selection.height) / 2)
+                                    32.min(selection.width.min(selection.height) / 2)
                                 } else {
                                     0
                                 };
@@ -700,11 +700,13 @@ mod platform {
 
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, COLORREF(0x00F0_FFFF));
-                let instructions: Vec<u16> =
-                    "移動游標偵測視窗 · 拖曳自由框選 · 滾輪調整圓角 · 方向鍵微調 · Enter 確認"
-                        .encode_utf16()
-                        .collect();
-                TextOutW(dc, 24, 24, &instructions);
+                if state.selection.is_none() {
+                    let instructions: Vec<u16> =
+                        "移動游標偵測視窗 · 拖曳自由框選 · 滾輪調整圓角 · 方向鍵微調 · Enter 確認"
+                            .encode_utf16()
+                            .collect();
+                    TextOutW(dc, 24, 24, &instructions);
+                }
 
                 if let Some(rect) = state.selection.or(state.hover_candidate) {
                     if rect.width > 0 && rect.height > 0 {
