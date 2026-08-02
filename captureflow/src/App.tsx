@@ -1,4 +1,5 @@
 import "./App.css";
+import AnnotationEditor from "./AnnotationEditor";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Image } from "@tauri-apps/api/image";
@@ -64,6 +65,7 @@ function App() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
   const [settingsError, setSettingsError] = useState("");
+  const [editingAnnotations, setEditingAnnotations] = useState(false);
 
   useEffect(() => {
     const stopSelection = listen<SelectionSnapshot>("captureflow://selection-complete", (event) => {
@@ -359,10 +361,20 @@ function App() {
             <button className="capture-button primary" onClick={openSticker} disabled={openingSticker}>
               {openingSticker ? "正在建立…" : "建立置頂貼圖"}
             </button>
+            <button className="capture-button" onClick={() => setEditingAnnotations(true)}>開啟物件式標註</button>
             <span>自動定位工具列 · 拖曳移動 · 游標中心縮放 · Ctrl + 滾輪透明度</span>
           </div>
           {outputStatus && <p className="output-status" role="status">{outputStatus}</p>}
         </section>
+      )}
+
+      {selection && editingAnnotations && (
+        <AnnotationEditor
+          imagePath={selection.imagePath}
+          width={selection.width}
+          height={selection.height}
+          onClose={() => setEditingAnnotations(false)}
+        />
       )}
 
       {(result || error) && (

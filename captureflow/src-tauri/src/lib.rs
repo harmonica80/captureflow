@@ -1,3 +1,4 @@
+mod annotation;
 mod capture;
 mod diagnostics;
 mod selector;
@@ -109,6 +110,17 @@ fn record_client_error(app: tauri::AppHandle, context: String, message: String) 
     settings::append_error(&app, &context, &message);
 }
 
+#[tauri::command]
+fn save_annotation_project(
+    app: tauri::AppHandle,
+    image_path: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    objects: serde_json::Value,
+) -> Result<String, String> {
+    annotation::save_project(&app, &image_path, canvas_width, canvas_height, objects)
+}
+
 fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -188,7 +200,8 @@ pub fn run() {
             run_capability_diagnostics,
             get_settings,
             update_capture_shortcut,
-            record_client_error
+            record_client_error,
+            save_annotation_project
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
