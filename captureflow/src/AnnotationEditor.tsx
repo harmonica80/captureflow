@@ -23,7 +23,9 @@ function arrowPolygon(x1: number, y1: number, x2: number, y2: number, strokeWidt
   const uy = dy / length;
   const px = -uy;
   const py = ux;
-  const headLength = Math.min(length * 0.45, Math.max(strokeWidth * 6, length * 0.2));
+  // Keep the arrowhead tied to stroke width instead of total arrow length.
+  // Very short arrows compress the head, while long arrows retain a stable shape.
+  const headLength = Math.min(length * 0.45, strokeWidth * 6);
   const neckX = x2 - ux * headLength;
   const neckY = y2 - uy * headLength;
   const tailHalf = Math.max(0.7, strokeWidth * 0.22);
