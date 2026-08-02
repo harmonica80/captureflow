@@ -468,6 +468,24 @@ mod platform {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
                         let point = clamp_point(point, state.width, state.height);
+                        if let Some(selection) = state.selection {
+                            let button = radius_button_rect(selection, state.width, state.height);
+                            if point.0 >= button.left
+                                && point.0 <= button.right
+                                && point.1 >= button.top
+                                && point.1 <= button.bottom
+                            {
+                                state.corner_radius = if state.corner_radius == 0 {
+                                    16.min(selection.width.min(selection.height) / 2)
+                                } else {
+                                    0
+                                };
+                                state.composite_bgra.clone_from(&state.dimmed_bgra);
+                                state.composite_rect = None;
+                                InvalidateRect(Some(hwnd), None, false);
+                                return LRESULT(0);
+                            }
+                        }
                         if let Some((handle, original)) = state
                             .selection
                             .and_then(|rect| hit_handle(point, rect).map(|handle| (handle, rect)))
@@ -716,6 +734,35 @@ mod platform {
                             SelectObject(dc, old_brush);
                             SelectObject(dc, old_pen);
                             DeleteObject(handle_brush.into());
+
+                            let button = radius_button_rect(rect, state.width, state.height);
+                            let button_brush = CreateSolidBrush(COLORREF(0x00FF_7B18));
+                            let old_brush = SelectObject(dc, button_brush.into());
+                            let button_pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FF_FFFF));
+                            let old_pen = SelectObject(dc, button_pen.into());
+                            RoundRect(
+                                dc,
+                                button.left,
+                                button.top,
+                                button.right,
+                                button.bottom,
+                                12,
+                                12,
+                            );
+                            let inset = 11;
+                            RoundRect(
+                                dc,
+                                button.left + inset,
+                                button.top + inset,
+                                button.right - inset,
+                                button.bottom - inset,
+                                8,
+                                8,
+                            );
+                            SelectObject(dc, old_pen);
+                            SelectObject(dc, old_brush);
+                            DeleteObject(button_pen.into());
+                            DeleteObject(button_brush.into());
                         }
 
                         let dimensions = format!("{} × {}", rect.width, rect.height);
@@ -905,6 +952,29 @@ mod platform {
             (rect.x, bottom),
             (rect.x, middle_y),
         ]
+    }
+
+    fn radius_button_rect(rect: RectInfo, width: i32, height: i32) -> RECT {
+        const SIZE: i32 = 44;
+        const GAP: i32 = 12;
+        let left = if rect.x + rect.width + GAP + SIZE <= width {
+            rect.x + rect.width + GAP
+        } else if rect.x >= GAP + SIZE {
+            rect.x - GAP - SIZE
+        } else {
+            (rect.x + rect.width - SIZE).clamp(0, width - SIZE)
+        };
+        let top = if rect.y + SIZE <= height {
+            rect.y
+        } else {
+            (height - SIZE).max(0)
+        };
+        RECT {
+            left,
+            top,
+            right: left + SIZE,
+            bottom: top + SIZE,
+        }
     }
 
     fn hit_handle(point: (i32, i32), rect: RectInfo) -> Option<Handle> {

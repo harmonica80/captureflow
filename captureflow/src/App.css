@@ -90,6 +90,7 @@ h1 { margin: 18px 0; max-width: 680px; font-size: clamp(38px, 6vw, 72px); line-h
 .annotation-stage svg.selecting { cursor: default; }
 .annotation-stage svg.selecting polygon, .annotation-stage svg.selecting > rect { cursor: move; }
 .annotation-selection { fill: none; stroke: #071b25; stroke-width: 3; stroke-dasharray: 9 5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.annotation-hover { fill: none; stroke: #fff; stroke-width: 2; stroke-dasharray: 7 4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .annotation-handle, .annotation-curve-handle, .annotation-radius-handle { fill: #fff; stroke: #1769aa; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .annotation-handle { cursor: nwse-resize; }
 .annotation-curve-handle, .annotation-radius-handle { cursor: grab; }
