@@ -438,7 +438,7 @@ fn path_string(path: PathBuf) -> String {
 
 #[cfg(windows)]
 mod platform {
-    use super::SelectedArea;
+    use super::{NativeAnnotation, SelectedArea};
     use crate::capture::RectInfo;
     use std::{mem::size_of, sync::mpsc};
     use windows::{
@@ -1410,8 +1410,8 @@ mod platform {
                 let angle = ((end_y - start_y) as f64).atan2((end_x - start_x) as f64);
                 for offset in [-0.55_f64, 0.55_f64] {
                     MoveToEx(dc, end_x, end_y, None);
-                    let x = end_x - (24.0 * (angle + offset).cos()).round() as i32;
-                    let y = end_y - (24.0 * (angle + offset).sin()).round() as i32;
+                    let x = end_x - (24.0_f64 * (angle + offset).cos()).round() as i32;
+                    let y = end_y - (24.0_f64 * (angle + offset).sin()).round() as i32;
                     let _ = LineTo(dc, x, y);
                 }
             }
