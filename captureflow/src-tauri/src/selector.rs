@@ -767,7 +767,10 @@ mod platform {
                             DeleteObject(button_brush.into());
                         }
 
-                        let dimensions = format!("{} × {}", rect.width, rect.height);
+                        let dimensions = format!(
+                            "{} × {} px · 圓角 {} px",
+                            rect.width, rect.height, state.corner_radius
+                        );
                         let dimensions: Vec<u16> = dimensions.encode_utf16().collect();
                         let label_y = if rect.y >= 34 {
                             rect.y - 28
@@ -776,11 +779,6 @@ mod platform {
                         };
                         SetTextColor(dc, COLORREF(0x00F0_FFFF));
                         TextOutW(dc, rect.x.max(8), label_y, &dimensions);
-                        if state.selection.is_some() {
-                            let radius = format!("圓角半徑 {} px · 滾輪調整", state.corner_radius);
-                            let radius: Vec<u16> = radius.encode_utf16().collect();
-                            TextOutW(dc, rect.x.max(8), label_y + 20, &radius);
-                        }
                     }
                 }
                 draw_magnifier(dc, state);

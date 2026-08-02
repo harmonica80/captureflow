@@ -67,9 +67,14 @@ function App() {
   const [settingsError, setSettingsError] = useState("");
   const [editingAnnotations, setEditingAnnotations] = useState(false);
 
+  function showCapturedSelection(captured: SelectionSnapshot) {
+    setSelection(captured);
+    setEditingAnnotations(true);
+  }
+
   useEffect(() => {
     const stopSelection = listen<SelectionSnapshot>("captureflow://selection-complete", (event) => {
-      setSelection(event.payload);
+      showCapturedSelection(event.payload);
       setError("");
     });
     const stopError = listen<string>("captureflow://selection-error", (event) => {
@@ -80,6 +85,13 @@ function App() {
       void stopError.then((unlisten) => unlisten());
     };
   }, []);
+
+  useEffect(() => {
+    if (!selection || !editingAnnotations) return;
+    window.requestAnimationFrame(() => {
+      document.querySelector(".annotation-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [editingAnnotations, selection]);
 
   useEffect(() => {
     void invoke<SettingsView>("get_settings")
@@ -113,7 +125,7 @@ function App() {
     setError("");
     try {
       const selected = await invoke<SelectionSnapshot | null>("select_screen_area");
-      if (selected) setSelection(selected);
+      if (selected) showCapturedSelection(selected);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -126,7 +138,7 @@ function App() {
     setError("");
     setOutputStatus("");
     try {
-      setSelection(await invoke<SelectionSnapshot>("repeat_last_selection"));
+      showCapturedSelection(await invoke<SelectionSnapshot>("repeat_last_selection"));
       setOutputStatus("已使用上次範圍擷取最新畫面");
     } catch (reason) {
       setError(String(reason));
@@ -140,7 +152,7 @@ function App() {
     setError("");
     setOutputStatus("");
     try {
-      setSelection(await invoke<SelectionSnapshot>("capture_monitor", { deviceName }));
+      showCapturedSelection(await invoke<SelectionSnapshot>("capture_monitor", { deviceName }));
       setOutputStatus(`已擷取 ${deviceName}`);
     } catch (reason) {
       setError(String(reason));
