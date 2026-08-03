@@ -40,6 +40,13 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .output-actions button, .editor-project-actions button { padding: 9px 12px; border: 1px solid #426653; border-radius: 9px; color: #e7f1ec; background: #142a21; font-weight: 700; cursor: pointer; }
 .output-actions button:hover, .editor-project-actions button:hover { border-color: #9bdcff; }
 .output-actions .accent, .editor-project-actions .save { border-color: #74e7ad; color: #062217; background: #74e7ad; }
+.action-menu { position: relative; }
+.action-menu summary { min-width: 112px; padding: 9px 12px; border: 1px solid #426653; border-radius: 9px; color: #e7f1ec; background: #142a21; font-weight: 700; text-align: center; cursor: pointer; list-style: none; }
+.action-menu summary::-webkit-details-marker { display: none; }
+.action-menu summary::after { content: "⌄"; margin-left: 7px; }
+.action-menu[open] summary { border-color: #9bdcff; }
+.action-menu-panel { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; display: grid; min-width: 180px; gap: 4px; padding: 6px; border: 1px solid #52685e; border-radius: 10px; background: #10231c; box-shadow: 0 12px 30px #0008; }
+.action-menu-panel button { width: 100%; text-align: left; }
 .empty-workspace { display: grid; min-height: 62vh; place-content: center; justify-items: center; text-align: center; }
 .empty-workspace p { max-width: 420px; color: #b9c9c1; }
 .empty-workspace .capture-button { width: auto; }
@@ -62,8 +69,11 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .stroke-control input { width: 82px; accent-color: #1769aa; }
 .stroke-control output { min-width: 20px; text-align: center; }
 .annotation-help { margin: 9px 0; color: #c3d2ca; font-size: 13px; }
-.annotation-stage { position: relative; width: 100%; max-height: calc(100vh - 270px); overflow: auto; border: 1px solid #668477; border-radius: 10px; background: #26332e; touch-action: none; }
+.annotation-scroll { max-height: calc(100vh - 270px); overflow: auto; border: 1px solid #668477; border-radius: 10px; background: #26332e; }
+.annotation-stage { position: relative; width: 100%; min-width: 560px; background: #26332e; touch-action: none; }
 .annotation-stage canvas, .annotation-stage svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.annotation-stage .mosaic-preview { z-index: 1; pointer-events: none; }
+.annotation-stage svg { z-index: 2; }
 .annotation-stage svg { cursor: crosshair; }
 .annotation-stage svg.tool-text { cursor: text; }
 .annotation-stage svg.tool-eraser { cursor: cell; }
@@ -71,6 +81,13 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .annotation-stage svg polygon, .annotation-stage svg polyline, .annotation-stage svg text, .annotation-stage svg g, .annotation-stage svg > rect:not(.selected-box), .annotation-stage svg ellipse { cursor: move; }
 .annotation-hover { fill: none; stroke: #1769aa; stroke-width: 2; stroke-dasharray: 7 4; pointer-events: none; }
 .selected-box { filter: drop-shadow(0 0 2px #fff); }
+.control-point { fill: #fff; stroke: #1769aa; stroke-width: 2; cursor: grab; }
+.inline-text-input { position: absolute; z-index: 3; min-width: 120px; padding: 2px 4px; border: 1px dashed #1769aa; outline: 0; background: #ffffffd9; }
+.property-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 7px 0; padding: 8px; border: 1px solid #52685e; border-radius: 9px; color: #252525; background: #f5f5f5; }
+.property-bar label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.property-bar select, .property-bar input[type="number"] { max-width: 180px; padding: 5px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }
+.property-bar button { padding: 6px 9px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }
+.property-bar button.active { border-color: #1769aa; background: #9bdcff; }
 .annotation-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f4f7f5; background: #26332e; font-weight: 700; }
 .settings-success { color: #c9f7df; font-weight: 700; overflow-wrap: anywhere; }
 .settings-error { padding: 10px 12px; border-left: 4px solid #ff8f86; color: #ffd8d4; background: #3b1e1d; font-weight: 700; }

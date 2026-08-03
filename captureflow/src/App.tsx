@@ -141,10 +141,15 @@ export default function App() {
           <div className="workspace-heading">
             <div><span>目前圖片</span><h2>{selection.width} × {selection.height}</h2><small>{selection.imagePath}</small></div>
             <div className="output-actions">
-              <button onClick={copySelection}>複製</button>
-              <button onClick={saveSelection} disabled={busy === "save"}>{busy === "save" ? "儲存中…" : "另存圖片"}</button>
-              <button className="accent" onClick={openSticker} disabled={busy === "sticker"}>{busy === "sticker" ? "建立中…" : "置頂貼圖"}</button>
-              <button onClick={() => setSelection(null)}>關閉</button>
+              <details className="action-menu">
+                <summary>完成／輸出</summary>
+                <div className="action-menu-panel">
+                  <button onClick={copySelection}>複製圖片</button>
+                  <button onClick={saveSelection} disabled={busy === "save"}>{busy === "save" ? "儲存中…" : "另存圖片…"}</button>
+                  <button onClick={openSticker} disabled={busy === "sticker"}>{busy === "sticker" ? "建立中…" : "建立置頂貼圖"}</button>
+                </div>
+              </details>
+              <button onClick={() => setSelection(null)}>關閉圖片</button>
             </div>
           </div>
           <AnnotationEditor imagePath={selection.imagePath} width={selection.width} height={selection.height} />
