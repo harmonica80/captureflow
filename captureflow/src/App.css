@@ -61,6 +61,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .annotation-toolbar button.selected { border-color: #1769aa; color: #071b25; background: #9bdcff; }
 .annotation-toolbar button:disabled { color: #545454; background: #e5e5e5; cursor: not-allowed; }
 .annotation-toolbar .icon-tool svg { width: 22px; height: 22px; }
+.annotation-toolbar .action-icon svg { width: 21px; height: 21px; }
+.annotation-toolbar .toolbar-spacer { flex: 1 0 14px; }
+.annotation-toolbar .primary-action { border-color: #1769aa; color: #071b25; background: #9bdcff; }
 .annotation-toolbar .icon-tool span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .toolbar-divider { width: 1px; height: 25px; flex: 0 0 auto; background: #b7c0bc; }
 .color-picker button { width: 22px; min-width: 22px; height: 22px; padding: 0; border: 1px solid #666; border-radius: 4px; }
@@ -88,6 +91,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .property-bar select, .property-bar input[type="number"] { max-width: 180px; padding: 5px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }
 .property-bar button { padding: 6px 9px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }
 .property-bar button.active { border-color: #1769aa; background: #9bdcff; }
+.property-bar .text-style { min-width: 34px; font-family: Arial, sans-serif; font-size: 18px; font-weight: 800; }
+.property-bar .text-style.italic { font-style: italic; font-weight: 600; }
 .annotation-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f4f7f5; background: #26332e; font-weight: 700; }
 .settings-success { color: #c9f7df; font-weight: 700; overflow-wrap: anywhere; }
 .settings-error { padding: 10px 12px; border-left: 4px solid #ff8f86; color: #ffd8d4; background: #3b1e1d; font-weight: 700; }

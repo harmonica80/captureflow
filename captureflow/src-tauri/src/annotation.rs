@@ -50,6 +50,7 @@ pub fn save_project(
     canvas_width: u32,
     canvas_height: u32,
     objects: serde_json::Value,
+    destination: Option<String>,
 ) -> Result<String, String> {
     if canvas_width == 0 || canvas_height == 0 {
         return Err("專案畫布尺寸不可為零。".into());
@@ -74,7 +75,12 @@ pub fn save_project(
         .as_millis();
     let output_dir = app_data.join("projects");
     fs::create_dir_all(&output_dir).map_err(|error| format!("無法建立專案目錄：{error}"))?;
-    let output = output_dir.join(format!("project-{timestamp}.captureflow.json"));
+    let output = destination
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| output_dir.join(format!("project-{timestamp}.captureflow.json")));
+    if output.extension().and_then(|value| value.to_str()) != Some("json") {
+        return Err("專案檔案必須使用 .json 副檔名".into());
+    }
     let project = AnnotationProject {
         schema_version: 1,
         created_at_unix_ms: timestamp,
@@ -90,6 +96,31 @@ pub fn save_project(
     )
     .map_err(|error| format!("無法儲存專案：{error}"))?;
     Ok(output.to_string_lossy().into_owned())
+}
+
+pub fn load_project_from(app: &AppHandle, project_path: &str) -> Result<AnnotationProject, String> {
+    let path = std::path::Path::new(project_path);
+    if path.extension().and_then(|value| value.to_str()) != Some("json") {
+        return Err("請選擇 JSON 專案檔案".into());
+    }
+    let bytes = fs::read(path).map_err(|error| format!("無法讀取專案：{error}"))?;
+    let project: AnnotationProject =
+        serde_json::from_slice(&bytes).map_err(|error| format!("專案格式不正確：{error}"))?;
+    if project.schema_version != 1 || project.objects.as_array().is_none() {
+        return Err("不支援的 CaptureFlow 專案格式".into());
+    }
+    let app_data = fs::canonicalize(
+        app.path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let source = fs::canonicalize(&project.source_image)
+        .map_err(|error| format!("找不到專案的來源圖片：{error}"))?;
+    if !source.starts_with(app_data) {
+        return Err("專案來源圖片不屬於 CaptureFlow 資料目錄".into());
+    }
+    Ok(project)
 }
 
 pub fn load_latest_project(app: &AppHandle, image_path: &str) -> Result<AnnotationProject, String> {

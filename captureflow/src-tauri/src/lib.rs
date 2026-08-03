@@ -117,8 +117,24 @@ fn save_annotation_project(
     canvas_width: u32,
     canvas_height: u32,
     objects: serde_json::Value,
+    destination: Option<String>,
 ) -> Result<String, String> {
-    annotation::save_project(&app, &image_path, canvas_width, canvas_height, objects)
+    annotation::save_project(
+        &app,
+        &image_path,
+        canvas_width,
+        canvas_height,
+        objects,
+        destination,
+    )
+}
+
+#[tauri::command]
+fn load_annotation_project_from(
+    app: tauri::AppHandle,
+    project_path: String,
+) -> Result<annotation::AnnotationProject, String> {
+    annotation::load_project_from(&app, &project_path)
 }
 
 #[tauri::command]
@@ -222,6 +238,7 @@ pub fn run() {
             record_client_error,
             save_annotation_project,
             load_latest_annotation_project,
+            load_annotation_project_from,
             save_edited_image
         ])
         .run(tauri::generate_context!())

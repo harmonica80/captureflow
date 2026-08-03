@@ -140,19 +140,9 @@ export default function App() {
         {selection ? <>
           <div className="workspace-heading">
             <div><span>目前圖片</span><h2>{selection.width} × {selection.height}</h2><small>{selection.imagePath}</small></div>
-            <div className="output-actions">
-              <details className="action-menu">
-                <summary>完成／輸出</summary>
-                <div className="action-menu-panel">
-                  <button onClick={copySelection}>複製圖片</button>
-                  <button onClick={saveSelection} disabled={busy === "save"}>{busy === "save" ? "儲存中…" : "另存圖片…"}</button>
-                  <button onClick={openSticker} disabled={busy === "sticker"}>{busy === "sticker" ? "建立中…" : "建立置頂貼圖"}</button>
-                </div>
-              </details>
-              <button onClick={() => setSelection(null)}>關閉圖片</button>
-            </div>
           </div>
-          <AnnotationEditor imagePath={selection.imagePath} width={selection.width} height={selection.height} />
+          <AnnotationEditor imagePath={selection.imagePath} width={selection.width} height={selection.height}
+            onCopy={copySelection} onSave={saveSelection} onSticker={openSticker} onClose={() => setSelection(null)} />
         </> : <div className="empty-workspace">
           <div className="empty-icon" aria-hidden="true">＋</div>
           <h2>尚未載入截圖</h2>
