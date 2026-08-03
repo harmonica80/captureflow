@@ -1,5 +1,6 @@
 use crate::capture::{capture_frame, MonitorInfo, RectInfo};
 use serde::{Deserialize, Serialize};
+use serde_big_array::BigArray;
 use std::{fs, path::PathBuf, time::SystemTime};
 use tauri::{AppHandle, Manager};
 use tiny_skia::{FillRule, Paint, PathBuilder, PixmapMut, Rect as SkRect, Stroke, Transform};
@@ -54,7 +55,9 @@ enum NativeAnnotation {
         color: u32,
     },
     Freehand {
+        #[serde(with = "BigArray")]
         points_x: [i32; 128],
+        #[serde(with = "BigArray")]
         points_y: [i32; 128],
         length: usize,
         stroke_width: i32,
@@ -950,8 +953,8 @@ fn path_string(path: PathBuf) -> String {
 #[cfg(windows)]
 mod platform {
     use super::{
-        apply_native_annotations, curved_arrow_points, tapered_arrow_points, NativeAnnotation,
-        SelectedArea,
+        apply_native_annotations, curved_arrow_points, pixelate_rgba_region,
+        tapered_arrow_points, NativeAnnotation, SelectedArea,
     };
     use crate::capture::RectInfo;
     use std::{mem::size_of, sync::mpsc};
