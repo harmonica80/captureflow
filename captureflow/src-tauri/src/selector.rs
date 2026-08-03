@@ -953,8 +953,8 @@ fn path_string(path: PathBuf) -> String {
 #[cfg(windows)]
 mod platform {
     use super::{
-        apply_native_annotations, curved_arrow_points, pixelate_rgba_region,
-        tapered_arrow_points, NativeAnnotation, SelectedArea,
+        apply_native_annotations, curved_arrow_points, pixelate_rgba_region, tapered_arrow_points,
+        NativeAnnotation, SelectedArea,
     };
     use crate::capture::RectInfo;
     use std::{mem::size_of, sync::mpsc};
