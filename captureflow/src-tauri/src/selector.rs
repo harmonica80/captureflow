@@ -61,7 +61,13 @@ enum NativeAnnotation {
         font_size: i32,
         color: u32,
         outline_color: u32,
+        #[serde(default = "default_text_outline_width")]
+        outline_width: i32,
     },
+}
+
+fn default_text_outline_width() -> i32 {
+    1
 }
 
 #[derive(Serialize)]
@@ -362,6 +368,7 @@ fn apply_native_annotations(
                 font_size,
                 color,
                 outline_color,
+                outline_width,
             } => {
                 draw_rgba_text(
                     pixmap.data_mut(),
@@ -373,6 +380,7 @@ fn apply_native_annotations(
                     font_size,
                     color,
                     outline_color,
+                    outline_width,
                 );
             }
         }
@@ -427,6 +435,7 @@ fn draw_rgba_text(
     font_size: i32,
     color: u32,
     outline_color: u32,
+    outline_width: i32,
 ) {
     let font_paths = [
         r"C:\Windows\Fonts\msjh.ttc",
@@ -454,13 +463,24 @@ fn draw_rgba_text(
                 if alpha == 0 {
                     continue;
                 }
-                for (dx, dy, draw_color) in [
-                    (-1, 0, outline_color),
-                    (1, 0, outline_color),
-                    (0, -1, outline_color),
-                    (0, 1, outline_color),
-                    (0, 0, color),
-                ] {
+                let radius = outline_width.clamp(0, 12);
+                for dy in -radius..=radius {
+                    for dx in -radius..=radius {
+                        if dx == 0 && dy == 0 || dx * dx + dy * dy > radius * radius {
+                            continue;
+                        }
+                        blend_rgba_pixel(
+                            pixels,
+                            width,
+                            height,
+                            glyph_x + column as i32 + dx,
+                            glyph_y + row as i32 + dy,
+                            outline_color,
+                            alpha,
+                        );
+                    }
+                }
+                for (dx, dy, draw_color) in [(0, 0, color)] {
                     blend_rgba_pixel(
                         pixels,
                         width,
@@ -848,6 +868,7 @@ mod platform {
         current_color: u32,
         color_palette_open: bool,
         text_outline_color: u32,
+        text_outline_width: i32,
         text_input: Option<TextInput>,
         sender: Option<mpsc::Sender<Option<SelectedArea>>>,
     }
@@ -901,6 +922,7 @@ mod platform {
         font_size: i32,
         color: u32,
         outline_color: u32,
+        outline_width: i32,
         editing_index: Option<usize>,
     }
 
@@ -961,6 +983,7 @@ mod platform {
             current_color: 0x0030_3BFF,
             color_palette_open: false,
             text_outline_color: 0x00FF_FFFF,
+            text_outline_width: 1,
             text_input: None,
             sender: Some(sender),
         });
@@ -1119,6 +1142,11 @@ mod platform {
                                 InvalidateRect(Some(hwnd), None, false);
                                 return LRESULT(0);
                             }
+                            // Clicking away from the active text editor commits it as a normal
+                            // selectable annotation before processing the new target.
+                            if state.text_input.is_some() {
+                                commit_text_input(state);
+                            }
                             let button = radius_button_rect(selection, state.width, state.height);
                             if point.0 >= button.left - 8
                                 && point.0 <= button.right + 8
@@ -1156,6 +1184,7 @@ mod platform {
                                     font_size,
                                     color,
                                     outline_color,
+                                    outline_width,
                                 } = state.annotations[index]
                                 {
                                     if state.selected_annotation == Some(index)
@@ -1171,6 +1200,7 @@ mod platform {
                                             font_size,
                                             color,
                                             outline_color,
+                                            outline_width,
                                             editing_index: Some(index),
                                         });
                                         InvalidateRect(Some(hwnd), None, false);
@@ -1208,6 +1238,7 @@ mod platform {
                                             font_size: 24,
                                             color: state.current_color,
                                             outline_color: state.text_outline_color,
+                                            outline_width: state.text_outline_width,
                                             editing_index: None,
                                         });
                                     } else {
@@ -1493,11 +1524,30 @@ mod platform {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
                         if let Some(input) = state.text_input.as_mut() {
-                            input.font_size =
-                                (input.font_size + if delta > 0 { 2 } else { -2 }).clamp(8, 160);
+                            if GetKeyState(VK_SHIFT.0 as i32) < 0 {
+                                input.outline_width = (input.outline_width
+                                    + if delta > 0 { 1 } else { -1 })
+                                .clamp(0, 12);
+                                state.text_outline_width = input.outline_width;
+                            } else {
+                                input.font_size = (input.font_size
+                                    + if delta > 0 { 2 } else { -2 })
+                                .clamp(8, 160);
+                            }
                         } else if let Some(index) = state.hovered_annotation {
                             let step = if delta > 0 { 1 } else { -1 };
-                            set_native_stroke_width(&mut state.annotations[index], step);
+                            if GetKeyState(VK_SHIFT.0 as i32) < 0
+                                && matches!(state.annotations[index], NativeAnnotation::Text { .. })
+                            {
+                                set_text_outline_width(&mut state.annotations[index], step);
+                                if let NativeAnnotation::Text { outline_width, .. } =
+                                    state.annotations[index]
+                                {
+                                    state.text_outline_width = outline_width;
+                                }
+                            } else {
+                                set_native_stroke_width(&mut state.annotations[index], step);
+                            }
                             state.selected_annotation = Some(index);
                         } else if let Some(rect) = state.selection {
                             let step = if delta > 0 { 4 } else { -4 };
@@ -1891,6 +1941,7 @@ mod platform {
             font_size: input.font_size,
             color: input.color,
             outline_color: input.outline_color,
+            outline_width: input.outline_width,
         };
         if let Some(index) = input
             .editing_index
@@ -2389,21 +2440,30 @@ mod platform {
             let mut text = [0u16; 32];
             let length = input.buffer.len().min(32);
             text[..length].copy_from_slice(&input.buffer[..length]);
-            draw_native_annotation(
-                dc,
-                NativeAnnotation::Text {
-                    x: input.x,
-                    y: input.y,
-                    text,
-                    length,
-                    font_size: input.font_size,
-                    color: input.color,
-                    outline_color: input.outline_color,
-                },
-            );
+            let draft = NativeAnnotation::Text {
+                x: input.x,
+                y: input.y,
+                text,
+                length,
+                font_size: input.font_size,
+                color: input.color,
+                outline_color: input.outline_color,
+                outline_width: input.outline_width,
+            };
+            draw_native_annotation(dc, draft);
+            if length > 0 {
+                draw_native_object_handles(dc, draft);
+            }
         }
         if let Some(index) = state.selected_annotation.or(state.hovered_annotation) {
-            draw_native_object_handles(dc, state.annotations[index]);
+            if state
+                .text_input
+                .as_ref()
+                .and_then(|input| input.editing_index)
+                != Some(index)
+            {
+                draw_native_object_handles(dc, state.annotations[index]);
+            }
         }
     }
 
@@ -2526,6 +2586,7 @@ mod platform {
                 length,
                 color,
                 outline_color,
+                outline_width,
                 font_size,
             } => {
                 let family: Vec<u16> = "Microsoft JhengHei\0".encode_utf16().collect();
@@ -2549,8 +2610,14 @@ mod platform {
                 SetBkMode(dc, TRANSPARENT);
                 let slice = &text[..length.min(text.len())];
                 SetTextColor(dc, COLORREF(outline_color));
-                for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                    TextOutW(dc, x + dx, y + dy, slice);
+                let radius = outline_width.clamp(0, 12);
+                for dy in -radius..=radius {
+                    for dx in -radius..=radius {
+                        if dx == 0 && dy == 0 || dx * dx + dy * dy > radius * radius {
+                            continue;
+                        }
+                        TextOutW(dc, x + dx, y + dy, slice);
+                    }
                 }
                 SetTextColor(dc, COLORREF(color));
                 TextOutW(dc, x, y, slice);
@@ -2841,6 +2908,7 @@ mod platform {
                 font_size,
                 color,
                 outline_color,
+                outline_width,
             } => {
                 let new_size = match handle {
                     AnnotationHandle::Start => font_size,
@@ -2854,6 +2922,7 @@ mod platform {
                     font_size: new_size,
                     color,
                     outline_color,
+                    outline_width,
                 }
             }
         }
@@ -2872,6 +2941,19 @@ mod platform {
     }
 
     fn cursor_for_point(point: (i32, i32), state: &SelectorState) -> windows::core::PCWSTR {
+        if let Some(selection) = state.selection {
+            let toolbar = annotation_toolbar_rect(selection, state.width, state.height);
+            let radius_button = radius_button_rect(selection, state.width, state.height);
+            let over_palette = state.color_palette_open
+                && point_in_rect(
+                    point,
+                    color_palette_rect(selection, state.width, state.height),
+                );
+            if point_in_rect(point, toolbar) || point_in_rect(point, radius_button) || over_palette
+            {
+                return IDC_ARROW;
+            }
+        }
         if let Some((_, handle)) = hit_native_annotation_handle(point, &state.annotations) {
             return match handle {
                 AnnotationHandle::TopRight | AnnotationHandle::BottomLeft => IDC_SIZENESW,
@@ -2903,6 +2985,10 @@ mod platform {
         } else {
             IDC_ARROW
         }
+    }
+
+    fn point_in_rect(point: (i32, i32), rect: RECT) -> bool {
+        point.0 >= rect.left && point.0 < rect.right && point.1 >= rect.top && point.1 < rect.bottom
     }
 
     fn move_native_annotation(annotation: NativeAnnotation, dx: i32, dy: i32) -> NativeAnnotation {
@@ -2945,6 +3031,7 @@ mod platform {
                 font_size,
                 color,
                 outline_color,
+                outline_width,
             } => NativeAnnotation::Text {
                 x: x + dx,
                 y: y + dy,
@@ -2953,6 +3040,7 @@ mod platform {
                 font_size,
                 color,
                 outline_color,
+                outline_width,
             },
             NativeAnnotation::Arrow {
                 start_x,
@@ -2977,13 +3065,16 @@ mod platform {
     }
 
     fn set_native_stroke_width(annotation: &mut NativeAnnotation, step: i32) {
-        let stroke_width = match annotation {
+        match annotation {
             NativeAnnotation::Rectangle { stroke_width, .. }
             | NativeAnnotation::Arrow { stroke_width, .. }
-            | NativeAnnotation::Ellipse { stroke_width, .. } => stroke_width,
-            NativeAnnotation::Text { font_size, .. } => font_size,
-        };
-        *stroke_width = (*stroke_width + step).clamp(1, 32);
+            | NativeAnnotation::Ellipse { stroke_width, .. } => {
+                *stroke_width = (*stroke_width + step).clamp(1, 32);
+            }
+            NativeAnnotation::Text { font_size, .. } => {
+                *font_size = (*font_size + step * 2).clamp(8, 160);
+            }
+        }
     }
 
     fn set_native_color(annotation: &mut NativeAnnotation, new_color: u32) {
@@ -2999,6 +3090,12 @@ mod platform {
     fn set_text_outline_color(annotation: &mut NativeAnnotation, new_color: u32) {
         if let NativeAnnotation::Text { outline_color, .. } = annotation {
             *outline_color = new_color;
+        }
+    }
+
+    fn set_text_outline_width(annotation: &mut NativeAnnotation, step: i32) {
+        if let NativeAnnotation::Text { outline_width, .. } = annotation {
+            *outline_width = (*outline_width + step).clamp(0, 12);
         }
     }
 
