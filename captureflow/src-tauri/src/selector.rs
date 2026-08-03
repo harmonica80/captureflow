@@ -1271,21 +1271,7 @@ mod platform {
                                 hit_annotation_toolbar(point, selection, state.width, state.height)
                             {
                                 match button {
-                                    0 => state.annotation_tool = Some(AnnotationTool::Rectangle),
-                                    1 => state.annotation_tool = Some(AnnotationTool::Ellipse),
-                                    2 => state.annotation_tool = Some(AnnotationTool::Freehand),
-                                    3 => state.annotation_tool = Some(AnnotationTool::Arrow),
-                                    4 => state.annotation_tool = Some(AnnotationTool::Text),
-                                    5 => state.annotation_tool = Some(AnnotationTool::Number),
-                                    6 => state.annotation_tool = Some(AnnotationTool::Mosaic),
-                                    7 => state.annotation_tool = Some(AnnotationTool::Eraser),
-                                    8 => state.color_palette_open = !state.color_palette_open,
-                                    9 => {
-                                        state.annotations.pop();
-                                        state.selected_annotation = None;
-                                        state.hovered_annotation = None;
-                                    }
-                                    10 => {
+                                    0 => {
                                         let result = SelectedArea {
                                             selection,
                                             corner_radius: state.corner_radius,
@@ -1301,7 +1287,7 @@ mod platform {
                                             LPARAM(0),
                                         );
                                     }
-                                    11 => {
+                                    1 => {
                                         if let Some(sender) = state.sender.take() {
                                             let _ = sender.send(None);
                                         }
@@ -2267,7 +2253,7 @@ mod platform {
     }
 
     fn annotation_toolbar_rect(rect: RectInfo, width: i32, height: i32) -> RECT {
-        const TOOL_WIDTH: i32 = 556;
+        const TOOL_WIDTH: i32 = 116;
         const TOOL_HEIGHT: i32 = 44;
         const GAP: i32 = 12;
         let left = rect.x.clamp(0, (width - TOOL_WIDTH).max(0));
@@ -2301,7 +2287,7 @@ mod platform {
             return None;
         }
         if point.0 < toolbar.left + 28 {
-            Some(9)
+            None
         } else {
             Some(((point.0 - toolbar.left - 28) / 44) as usize)
         }
@@ -2413,31 +2399,9 @@ mod platform {
             }
         }
         DeleteObject(dot_brush.into());
-        for index in 0..12 {
+        for index in 0..2 {
             let left = toolbar.left + 28 + index as i32 * 44;
-            let selected = matches!(
-                (index, state.annotation_tool),
-                (0, Some(AnnotationTool::Rectangle))
-                    | (1, Some(AnnotationTool::Ellipse))
-                    | (2, Some(AnnotationTool::Freehand))
-                    | (3, Some(AnnotationTool::Arrow))
-                    | (4, Some(AnnotationTool::Text))
-                    | (5, Some(AnnotationTool::Number))
-                    | (6, Some(AnnotationTool::Mosaic))
-                    | (7, Some(AnnotationTool::Eraser))
-            );
-            if selected {
-                let brush = CreateSolidBrush(COLORREF(0x00FF_DC9B));
-                let area = RECT {
-                    left,
-                    top: toolbar.top,
-                    right: left + 44,
-                    bottom: toolbar.bottom,
-                };
-                FillRect(dc, &area, brush);
-                DeleteObject(brush.into());
-            }
-            if matches!(index, 8 | 9 | 11) {
+            if index == 1 {
                 let separator = CreatePen(PS_SOLID, 1, COLORREF(0x00D5_D5D5));
                 let previous_pen = SelectObject(dc, separator.into());
                 MoveToEx(dc, left, toolbar.top + 9, None);
@@ -2445,10 +2409,14 @@ mod platform {
                 SelectObject(dc, previous_pen);
                 DeleteObject(separator.into());
             }
-            draw_toolbar_icon(dc, index, left, toolbar.top, state.current_color, selected);
-        }
-        if state.color_palette_open {
-            draw_color_palette(dc, state, rect);
+            draw_toolbar_icon(
+                dc,
+                if index == 0 { 10 } else { 11 },
+                left,
+                toolbar.top,
+                state.current_color,
+                false,
+            );
         }
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);

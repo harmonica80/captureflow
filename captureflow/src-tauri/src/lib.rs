@@ -129,6 +129,17 @@ fn load_latest_annotation_project(
     annotation::load_latest_project(&app, &image_path)
 }
 
+#[tauri::command]
+fn save_edited_image(
+    app: tauri::AppHandle,
+    image_path: String,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+) -> Result<(), String> {
+    annotation::save_edited_image(&app, &image_path, width, height, rgba)
+}
+
 fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -210,7 +221,8 @@ pub fn run() {
             update_capture_shortcut,
             record_client_error,
             save_annotation_project,
-            load_latest_annotation_project
+            load_latest_annotation_project,
+            save_edited_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

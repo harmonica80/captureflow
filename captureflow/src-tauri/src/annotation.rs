@@ -2,6 +2,37 @@ use serde::{Deserialize, Serialize};
 use std::{fs, time::SystemTime};
 use tauri::{AppHandle, Manager};
 
+pub fn save_edited_image(
+    app: &AppHandle,
+    image_path: &str,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+) -> Result<(), String> {
+    let source = fs::canonicalize(image_path).map_err(|error| format!("無法讀取截圖：{error}"))?;
+    let app_data = fs::canonicalize(
+        app.path()
+            .app_data_dir()
+            .map_err(|error| format!("無法取得應用程式資料目錄：{error}"))?,
+    )
+    .map_err(|error| format!("無法讀取應用程式資料目錄：{error}"))?;
+    if !source.starts_with(&app_data) {
+        return Err("只能更新 CaptureFlow 產生的截圖。".into());
+    }
+    if width == 0 || height == 0 || rgba.len() != width as usize * height as usize * 4 {
+        return Err("編輯圖片尺寸或像素資料不正確。".into());
+    }
+    image::save_buffer_with_format(
+        source,
+        &rgba,
+        width,
+        height,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    )
+    .map_err(|error| format!("無法儲存編輯圖片：{error}"))
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnnotationProject {
