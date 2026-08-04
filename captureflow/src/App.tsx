@@ -118,12 +118,15 @@ export default function App() {
         </section>
 
         <section className="sidebar-card monitor-card">
-          <h2>整個螢幕</h2>
-          {monitors.map((monitor) => <button key={monitor.deviceName} onClick={() => runCapture("monitor", monitor.deviceName)} disabled={busy !== ""}>
-            <span>{monitor.deviceName}{monitor.isPrimary ? " · 主要" : ""}</span>
-            <small>{monitor.bounds.width} × {monitor.bounds.height} · {Math.round(monitor.scaleFactor * 100)}%</small>
-          </button>)}
+          <h2>擷取整個螢幕</h2>
+          <div className="monitor-buttons">{monitors.map((monitor, index) => <button key={monitor.deviceName} onClick={() => runCapture("monitor", monitor.deviceName)} disabled={busy !== ""} title={monitor.deviceName}>
+            <span>螢幕 {index + 1}</span>
+          </button>)}</div>
         </section>
+
+        {selection && <section className="sidebar-card current-image-card" aria-label="目前圖片資訊">
+          <span>目前圖片</span><strong>{selection.width} × {selection.height}</strong><small title={selection.imagePath}>{selection.imagePath}</small>
+        </section>}
 
         {settings && <details className="sidebar-card settings-card">
           <summary>快捷鍵設定</summary>
@@ -134,13 +137,14 @@ export default function App() {
             <button className="capture-button" onClick={() => applyShortcut(settings.defaultShortcut)}>預設</button>
           </div>
         </details>}
+
+        {(message || error) && <section className={`sidebar-notice ${error ? "error" : ""}`} role={error ? "alert" : "status"}>
+          <strong>{error ? "發生錯誤" : "目前狀態"}</strong><span>{error || message}</span>
+        </section>}
       </aside>
 
       <section className="editor-workspace" aria-label="圖片編輯工作區">
         {selection ? <>
-          <div className="workspace-heading">
-            <div><span>目前圖片</span><h2>{selection.width} × {selection.height}</h2><small>{selection.imagePath}</small></div>
-          </div>
           <AnnotationEditor imagePath={selection.imagePath} width={selection.width} height={selection.height}
             onCopy={copySelection} onSave={saveSelection} onSticker={openSticker} onClose={() => setSelection(null)} />
         </> : <div className="empty-workspace">
@@ -151,6 +155,5 @@ export default function App() {
         </div>}
       </section>
     </div>
-    {(message || error) && <div className={`app-toast ${error ? "error" : ""}`} role={error ? "alert" : "status"}>{error || message}</div>}
   </main>;
 }

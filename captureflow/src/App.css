@@ -23,9 +23,19 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .capture-button.primary:hover { background: #9bf2c5; }
 .capture-button:disabled { border-color: #59665f; color: #c2ccc7; background: #26332e; cursor: wait; }
 .monitor-card { display: grid; gap: 7px; }
+.monitor-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .monitor-card button { display: grid; gap: 3px; padding: 10px; border: 1px solid #365847; border-radius: 9px; color: #e7f1ec; background: #10231c; text-align: left; cursor: pointer; }
 .monitor-card button:hover { border-color: #74e7ad; }
 .monitor-card small { color: #b9c9c1; }
+.current-image-card { display: grid; gap: 5px; }
+.current-image-card span { color: #77e2ad; font-size: 12px; font-weight: 700; }
+.current-image-card strong { font-size: 22px; }
+.current-image-card small { overflow: hidden; color: #b9c9c1; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-notice { display: grid; gap: 5px; padding: 12px 14px; border-left: 4px solid #74e7ad; border-radius: 4px 10px 10px 4px; color: #d8f7e7; background: #123126; }
+.sidebar-notice strong { color: #9bf2c5; font-size: 12px; }
+.sidebar-notice span { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.sidebar-notice.error { border-left-color: #ff8f86; color: #ffd8d4; background: #3b1e1d; }
+.sidebar-notice.error strong { color: #ffd8d4; }
 .settings-card summary { color: #e7f1ec; font-weight: 700; cursor: pointer; }
 .settings-card label { display: block; margin-top: 14px; color: #d5e5dd; font-size: 13px; }
 .settings-card input { width: 100%; margin-top: 6px; padding: 10px; border: 1px solid #527563; border-radius: 8px; color: #f4f7f5; background: #081611; }
@@ -54,20 +64,28 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 
 .annotation-editor { margin-top: 18px; }
 .annotation-heading h2 { margin: 4px 0 0; font-size: 19px; }
-.annotation-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 14px; padding: 7px; overflow-x: auto; border: 1px solid #52685e; border-radius: 11px; background: #fafafa; color: #252525; }
+.editor-action-toolbar { display: flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid #52685e; border-radius: 10px; background: #fafafa; color: #252525; }
+.editor-action-toolbar button { display: grid; width: 36px; height: 36px; place-items: center; padding: 6px; border: 1px solid transparent; border-radius: 7px; color: #252525; background: transparent; cursor: pointer; }
+.editor-action-toolbar button:hover { border-color: #5c6d65; background: #e3e9e6; }
+.editor-action-toolbar button:disabled { color: #545454; background: #e5e5e5; cursor: not-allowed; }
+.editor-action-toolbar svg { width: 21px; height: 21px; }
+.editor-action-toolbar .primary-action { border-color: #1769aa; color: #071b25; background: #9bdcff; }
+.annotation-toolbar-wrap { position: relative; }
+.annotation-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 14px; padding: 7px; border: 1px solid #52685e; border-radius: 11px; background: #fafafa; color: #252525; }
 .tool-group, .color-picker { display: flex; align-items: center; gap: 3px; }
 .annotation-toolbar button { display: grid; min-width: 36px; height: 36px; place-items: center; padding: 6px; border: 1px solid transparent; border-radius: 7px; color: #252525; background: transparent; cursor: pointer; }
 .annotation-toolbar button:hover { border-color: #5c6d65; background: #e3e9e6; }
 .annotation-toolbar button.selected { border-color: #1769aa; color: #071b25; background: #9bdcff; }
 .annotation-toolbar button:disabled { color: #545454; background: #e5e5e5; cursor: not-allowed; }
 .annotation-toolbar .icon-tool svg { width: 22px; height: 22px; }
-.annotation-toolbar .action-icon svg { width: 21px; height: 21px; }
-.annotation-toolbar .toolbar-spacer { flex: 1 0 14px; }
-.annotation-toolbar .primary-action { border-color: #1769aa; color: #071b25; background: #9bdcff; }
 .annotation-toolbar .icon-tool span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .toolbar-divider { width: 1px; height: 25px; flex: 0 0 auto; background: #b7c0bc; }
 .color-picker button { width: 22px; min-width: 22px; height: 22px; padding: 0; border: 1px solid #666; border-radius: 4px; }
 .color-picker button.active { outline: 3px solid #1769aa; outline-offset: 1px; }
+.annotation-toolbar .current-color { width: 28px; min-width: 28px; height: 28px; padding: 0; border: 2px solid #fff; outline: 2px solid #1769aa; }
+.floating-color-palette { position: absolute; z-index: 15; top: calc(100% + 5px); left: 310px; display: grid; grid-template-columns: repeat(5, 24px); gap: 5px; padding: 7px; border: 1px solid #68766f; border-radius: 8px; background: #fafafa; box-shadow: 0 10px 24px #0006; }
+.floating-color-palette button { width: 24px; height: 24px; padding: 0; border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+.floating-color-palette button.active { outline: 3px solid #1769aa; outline-offset: 1px; }
 .stroke-control { display: flex; align-items: center; gap: 6px; color: #252525; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .stroke-control input { width: 82px; accent-color: #1769aa; }
 .stroke-control output { min-width: 20px; text-align: center; }
@@ -85,7 +103,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .annotation-hover { fill: none; stroke: #1769aa; stroke-width: 2; stroke-dasharray: 7 4; pointer-events: none; }
 .selected-box { filter: drop-shadow(0 0 2px #fff); }
 .control-point { fill: #fff; stroke: #1769aa; stroke-width: 2; cursor: grab; }
-.inline-text-input { position: absolute; z-index: 3; min-width: 120px; padding: 2px 4px; border: 1px dashed #1769aa; outline: 0; background: #ffffffd9; }
+.inline-text-input { position: absolute; z-index: 3; min-width: 1ch; max-width: calc(100% - 8px); padding: 0; border: 0; outline: 0; color: inherit; background: transparent; line-height: 1.15; }
 .property-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 7px 0; padding: 8px; border: 1px solid #52685e; border-radius: 9px; color: #252525; background: #f5f5f5; }
 .property-bar label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .property-bar select, .property-bar input[type="number"] { max-width: 180px; padding: 5px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }
@@ -96,8 +114,6 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .annotation-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f4f7f5; background: #26332e; font-weight: 700; }
 .settings-success { color: #c9f7df; font-weight: 700; overflow-wrap: anywhere; }
 .settings-error { padding: 10px 12px; border-left: 4px solid #ff8f86; color: #ffd8d4; background: #3b1e1d; font-weight: 700; }
-.app-toast { position: fixed; right: 24px; bottom: 24px; max-width: min(560px, calc(100vw - 48px)); padding: 12px 16px; border: 1px solid #74e7ad; border-radius: 10px; color: #062217; background: #9bf2c5; box-shadow: 0 12px 40px #0008; font-weight: 700; }
-.app-toast.error { border-color: #ff8f86; color: #3b0805; background: #ffd8d4; }
 
 @media (max-width: 900px) {
   .workspace-layout { grid-template-columns: 1fr; }
