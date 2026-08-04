@@ -147,6 +147,7 @@ export default function App() {
         {selection ? <>
           <AnnotationEditor imagePath={selection.imagePath} width={selection.width} height={selection.height}
             onCopy={copySelection} onSave={saveSelection} onSticker={openSticker} onClose={() => setSelection(null)}
+            onProjectImage={(imagePath, width, height) => setSelection(current => current ? { ...current, imagePath, width, height } : current)}
             onStatus={(status, isError) => { if (isError) { setError(status); setMessage(""); } else { setMessage(status); setError(""); } }} />
         </> : <div className="empty-workspace">
           <div className="empty-icon" aria-hidden="true">＋</div>

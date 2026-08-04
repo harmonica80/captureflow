@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::{fs, time::SystemTime};
 use tauri::{AppHandle, Manager};
@@ -71,6 +72,8 @@ pub struct AnnotationProject {
     schema_version: u32,
     created_at_unix_ms: u128,
     source_image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_image_base64: Option<String>,
     canvas_width: u32,
     canvas_height: u32,
     objects: serde_json::Value,
@@ -113,14 +116,18 @@ pub fn save_project(
     if output.extension().and_then(|value| value.to_str()) != Some("json") {
         return Err("專案檔案必須使用 .json 副檔名".into());
     }
-    let project = AnnotationProject {
-        schema_version: 1,
-        created_at_unix_ms: timestamp,
-        source_image: image_path.to_string(),
-        canvas_width,
-        canvas_height,
-        objects: serde_json::Value::Array(objects.clone()),
-    };
+    let project =
+        AnnotationProject {
+            schema_version: 2,
+            created_at_unix_ms: timestamp,
+            source_image: image_path.to_string(),
+            source_image_base64: Some(BASE64.encode(
+                fs::read(&source).map_err(|error| format!("無法讀取專案來源圖片：{error}"))?,
+            )),
+            canvas_width,
+            canvas_height,
+            objects: serde_json::Value::Array(objects.clone()),
+        };
     fs::write(
         &output,
         serde_json::to_vec_pretty(&project)
@@ -138,7 +145,7 @@ pub fn load_project_from(app: &AppHandle, project_path: &str) -> Result<Annotati
     let bytes = fs::read(path).map_err(|error| format!("無法讀取專案：{error}"))?;
     let project: AnnotationProject =
         serde_json::from_slice(&bytes).map_err(|error| format!("專案格式不正確：{error}"))?;
-    if project.schema_version != 1 || project.objects.as_array().is_none() {
+    if !matches!(project.schema_version, 1 | 2) || project.objects.as_array().is_none() {
         return Err("不支援的 CaptureFlow 專案格式".into());
     }
     let app_data = fs::canonicalize(
@@ -147,12 +154,26 @@ pub fn load_project_from(app: &AppHandle, project_path: &str) -> Result<Annotati
             .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
-    let source = fs::canonicalize(&project.source_image)
-        .map_err(|error| format!("找不到專案的來源圖片：{error}"))?;
-    if !source.starts_with(app_data) {
-        return Err("專案來源圖片不屬於 CaptureFlow 資料目錄".into());
+    if let Ok(source) = fs::canonicalize(&project.source_image) {
+        if source.starts_with(&app_data) {
+            return Ok(project);
+        }
     }
-    Ok(project)
+    let encoded = project
+        .source_image_base64
+        .as_deref()
+        .ok_or("專案沒有內嵌來源圖片，且原始圖片已不存在")?;
+    let bytes = BASE64
+        .decode(encoded)
+        .map_err(|error| format!("內嵌來源圖片格式不正確：{error}"))?;
+    image::load_from_memory(&bytes).map_err(|error| format!("內嵌來源圖片無法讀取：{error}"))?;
+    let directory = app_data.join("imported-projects");
+    fs::create_dir_all(&directory).map_err(|error| format!("無法建立專案圖片資料夾：{error}"))?;
+    let output = directory.join(format!("project-{}.png", project.created_at_unix_ms));
+    fs::write(&output, bytes).map_err(|error| format!("無法還原專案來源圖片：{error}"))?;
+    let mut restored = project;
+    restored.source_image = output.to_string_lossy().into_owned();
+    Ok(restored)
 }
 
 pub fn load_latest_project(app: &AppHandle, image_path: &str) -> Result<AnnotationProject, String> {
@@ -182,7 +203,7 @@ pub fn load_latest_project(app: &AppHandle, image_path: &str) -> Result<Annotati
         let Ok(project_source) = fs::canonicalize(&project.source_image) else {
             continue;
         };
-        if project.schema_version == 1
+        if matches!(project.schema_version, 1 | 2)
             && project_source == source
             && project.objects.as_array().is_some()
         {
