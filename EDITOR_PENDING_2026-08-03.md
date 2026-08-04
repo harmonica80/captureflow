@@ -2,6 +2,8 @@
 
 本文件記錄使用者已實機驗證、預計下次處理的四項問題。本次只記錄，不修改程式。
 
+> 2026-08-04：以下四項已完成程式修正，等待 Windows portable EXE 實機驗收。
+
 ## 1. 序號欄位文案
 
 - 現況：選取既有序號物件時，欄位仍顯示「下一個序號」。
@@ -25,4 +27,3 @@
 - 已知原因：Tauri capability 尚未授權 dialog open 命令，不是 JSON 檔案損壞。
 - 修正方向：在 `src-tauri/capabilities/default.json` 加入對應的 dialog open 權限，並一併核對 save 權限。
 - 另需檢查：目前預設路徑畫面曾出現 `DownloadsDownloadsCaptureFlow-project1.json`，應使用路徑 API 正確 join，避免重複 Downloads。
-
