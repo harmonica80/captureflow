@@ -130,6 +130,22 @@ fn save_annotation_project(
 }
 
 #[tauri::command]
+fn auto_save_annotation_project(
+    app: tauri::AppHandle,
+    image_path: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    objects: serde_json::Value,
+) -> Result<String, String> {
+    annotation::auto_save_project(&app, &image_path, canvas_width, canvas_height, objects)
+}
+
+#[tauri::command]
+fn list_capture_history(app: tauri::AppHandle) -> Result<Vec<annotation::HistoryEntry>, String> {
+    annotation::list_history(&app)
+}
+
+#[tauri::command]
 fn load_annotation_project_from(
     app: tauri::AppHandle,
     project_path: String,
@@ -247,6 +263,8 @@ pub fn run() {
             update_capture_shortcut,
             record_client_error,
             save_annotation_project,
+            auto_save_annotation_project,
+            list_capture_history,
             load_latest_annotation_project,
             load_annotation_project_from,
             save_edited_image,

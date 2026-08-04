@@ -26,6 +26,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .monitor-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .monitor-card button { display: grid; gap: 3px; padding: 10px; border: 1px solid #365847; border-radius: 9px; color: #e7f1ec; background: #10231c; text-align: left; cursor: pointer; }
 .monitor-card button:hover { border-color: #74e7ad; }
+.history-card { display: grid; gap: 7px; }
+.history-card button { display: grid; gap: 3px; padding: 9px 10px; border: 1px solid #365847; border-radius: 9px; color: #eef7f2; background: #10231c; text-align: left; cursor: pointer; }
+.history-card button:hover { border-color: #74e7ad; background: #193126; }
+.history-card small { color: #c3d2ca; }
 .monitor-card small { color: #b9c9c1; }
 .current-image-card { display: grid; gap: 5px; }
 .current-image-card span { color: #77e2ad; font-size: 12px; font-weight: 700; }
@@ -70,6 +74,11 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .editor-action-toolbar button:disabled { color: #545454; background: #e5e5e5; cursor: not-allowed; }
 .editor-action-toolbar svg { width: 21px; height: 21px; }
 .editor-action-toolbar .primary-action { border-color: #1769aa; color: #071b25; background: #9bdcff; }
+.editor-action-toolbar .action-icon:first-child { display: none; }
+.update-notice { display: flex; align-items: center; justify-content: flex-end; gap: 10px; max-width: 1600px; margin: -8px auto 14px; padding: 10px 12px; border: 1px solid #527563; border-radius: 10px; color: #eef7f2; background: #123126; }
+.update-notice a, .app-footer a { color: #9bdcff; font-weight: 700; }
+.update-notice button { padding: 6px 9px; border: 1px solid #668477; border-radius: 7px; color: #eef7f2; background: #142a21; cursor: pointer; }
+.app-footer { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 18px; max-width: 1600px; margin: 18px auto 0; padding: 16px; border-top: 1px solid #315444; color: #d8e7df; font-size: 13px; }
 .annotation-toolbar-wrap { position: relative; }
 .annotation-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 14px; padding: 7px; border: 1px solid #52685e; border-radius: 11px; background: #fafafa; color: #252525; }
 .tool-group, .color-picker { display: flex; align-items: center; gap: 3px; }

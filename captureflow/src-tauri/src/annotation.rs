@@ -69,14 +69,25 @@ pub fn save_composited_image(
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnnotationProject {
-    schema_version: u32,
-    created_at_unix_ms: u128,
-    source_image: String,
+    pub schema_version: u32,
+    pub created_at_unix_ms: u128,
+    pub source_image: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_image_base64: Option<String>,
-    canvas_width: u32,
-    canvas_height: u32,
-    objects: serde_json::Value,
+    pub canvas_width: u32,
+    pub canvas_height: u32,
+    pub objects: serde_json::Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub project_path: String,
+    pub image_path: String,
+    pub created_at_unix_ms: u128,
+    pub canvas_width: u32,
+    pub canvas_height: u32,
+    pub selection: Option<serde_json::Value>,
 }
 
 pub fn save_project(
@@ -135,6 +146,105 @@ pub fn save_project(
     )
     .map_err(|error| format!("無法儲存專案：{error}"))?;
     Ok(output.to_string_lossy().into_owned())
+}
+
+pub fn auto_save_project(
+    app: &AppHandle,
+    image_path: &str,
+    canvas_width: u32,
+    canvas_height: u32,
+    objects: serde_json::Value,
+) -> Result<String, String> {
+    let source = fs::canonicalize(image_path).map_err(|error| format!("無法讀取底圖：{error}"))?;
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or("截圖檔名不正確")?;
+    let history_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("history");
+    fs::create_dir_all(&history_dir).map_err(|error| format!("無法建立歷史資料夾：{error}"))?;
+    let output = history_dir.join(format!("{stem}.captureflow.json"));
+    let saved = save_project(
+        app,
+        image_path,
+        canvas_width,
+        canvas_height,
+        objects,
+        Some(output.to_string_lossy().into_owned()),
+    )?;
+    prune_history(app, 20)?;
+    Ok(saved)
+}
+
+pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    let history_dir = app_data.join("history");
+    let mut entries = Vec::new();
+    let Ok(files) = fs::read_dir(history_dir) else {
+        return Ok(entries);
+    };
+    for file in files.flatten() {
+        let path = file.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&path) else { continue };
+        let Ok(project) = serde_json::from_slice::<AnnotationProject>(&bytes) else {
+            continue;
+        };
+        let source = std::path::Path::new(&project.source_image);
+        if !source.exists() {
+            continue;
+        }
+        let metadata = source.with_extension("json");
+        let selection = fs::read(&metadata)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|value| value.get("selection").cloned());
+        entries.push(HistoryEntry {
+            project_path: path.to_string_lossy().into_owned(),
+            image_path: project.source_image,
+            created_at_unix_ms: project.created_at_unix_ms,
+            canvas_width: project.canvas_width,
+            canvas_height: project.canvas_height,
+            selection,
+        });
+    }
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_unix_ms));
+    entries.truncate(20);
+    Ok(entries)
+}
+
+fn prune_history(app: &AppHandle, keep: usize) -> Result<(), String> {
+    let history_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("history");
+    let mut entries: Vec<(u128, std::path::PathBuf, String)> = fs::read_dir(history_dir)
+        .map_err(|error| error.to_string())?
+        .flatten()
+        .filter_map(|file| {
+            let path = file.path();
+            let project =
+                serde_json::from_slice::<AnnotationProject>(&fs::read(&path).ok()?).ok()?;
+            Some((project.created_at_unix_ms, path, project.source_image))
+        })
+        .collect();
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    for (_, project_path, image_path) in entries.into_iter().skip(keep) {
+        let image = std::path::PathBuf::from(image_path);
+        let _ = fs::remove_file(project_path);
+        let _ = fs::remove_file(image.with_extension("json"));
+        let _ = fs::remove_file(image);
+    }
+    Ok(())
 }
 
 pub fn load_project_from(app: &AppHandle, project_path: &str) -> Result<AnnotationProject, String> {
