@@ -146,7 +146,8 @@ export default function App() {
       <section className="editor-workspace" aria-label="圖片編輯工作區">
         {selection ? <>
           <AnnotationEditor imagePath={selection.imagePath} width={selection.width} height={selection.height}
-            onCopy={copySelection} onSave={saveSelection} onSticker={openSticker} onClose={() => setSelection(null)} />
+            onCopy={copySelection} onSave={saveSelection} onSticker={openSticker} onClose={() => setSelection(null)}
+            onStatus={(status, isError) => { if (isError) { setError(status); setMessage(""); } else { setMessage(status); setError(""); } }} />
         </> : <div className="empty-workspace">
           <div className="empty-icon" aria-hidden="true">＋</div>
           <h2>尚未載入截圖</h2>
