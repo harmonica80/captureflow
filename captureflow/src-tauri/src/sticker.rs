@@ -13,6 +13,7 @@ pub fn open(app: &tauri::AppHandle, image_path: String, x: i32, y: i32) -> Resul
     for pixel in bgra.chunks_exact_mut(4) {
         pixel.swap(0, 2);
     }
+    let corner_radius = infer_corner_radius(&bgra, width as i32, height as i32);
     let persistence_path = sticker_store::path(app)?;
     let record = StickerRecord {
         id: sticker_store::next_id(),
@@ -29,7 +30,16 @@ pub fn open(app: &tauri::AppHandle, image_path: String, x: i32, y: i32) -> Resul
 
     std::thread::Builder::new()
         .name("captureflow-sticker".into())
-        .spawn(move || platform::run(record, persistence_path, width as i32, height as i32, bgra))
+        .spawn(move || {
+            platform::run(
+                record,
+                persistence_path,
+                width as i32,
+                height as i32,
+                corner_radius,
+                bgra,
+            )
+        })
         .map_err(|error| format!("無法啟動貼圖視窗：{error}"))?;
     Ok(())
 }
@@ -49,13 +59,34 @@ pub fn restore(app: &tauri::AppHandle) {
         for pixel in bgra.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
+        let corner_radius = infer_corner_radius(&bgra, width as i32, height as i32);
         let persistence_path = persistence_path.clone();
         let _ = std::thread::Builder::new()
             .name("captureflow-sticker-restore".into())
             .spawn(move || {
-                platform::run(record, persistence_path, width as i32, height as i32, bgra)
+                platform::run(
+                    record,
+                    persistence_path,
+                    width as i32,
+                    height as i32,
+                    corner_radius,
+                    bgra,
+                )
             });
     }
+}
+
+fn infer_corner_radius(bgra: &[u8], width: i32, height: i32) -> i32 {
+    if width < 2 || height < 2 {
+        return 0;
+    }
+    let top = (0..width)
+        .take_while(|x| bgra[(*x as usize) * 4 + 3] < 128)
+        .count() as i32;
+    let left = (0..height)
+        .take_while(|y| bgra[(*y as usize * width as usize) * 4 + 3] < 128)
+        .count() as i32;
+    top.max(left).clamp(0, width.min(height) / 2)
 }
 
 #[cfg(windows)]
@@ -76,12 +107,12 @@ mod platform {
                 },
                 Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
                 Gdi::{
-                    BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
-                    GetStockObject, InvalidateRect, LineTo, MoveToEx, Rectangle, RedrawWindow,
-                    SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
-                    BITMAPINFOHEADER, BI_RGB, DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH,
-                    PAINTSTRUCT, PS_SOLID, RDW_INVALIDATE, RDW_NOERASE, RDW_UPDATENOW, SRCCOPY,
-                    TRANSPARENT,
+                    BeginPaint, CreatePen, CreateRoundRectRgn, CreateSolidBrush, DeleteObject,
+                    EndPaint, FillRect, GetStockObject, InvalidateRect, LineTo, MoveToEx,
+                    Rectangle, RedrawWindow, SelectObject, SetBkMode, SetTextColor, SetWindowRgn,
+                    StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+                    DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID,
+                    RDW_INVALIDATE, RDW_NOERASE, RDW_UPDATENOW, SRCCOPY, TRANSPARENT,
                 },
             },
             System::LibraryLoader::GetModuleHandleW,
@@ -116,6 +147,7 @@ mod platform {
         persistence_path: PathBuf,
         source_width: i32,
         source_height: i32,
+        corner_radius: i32,
         bgra: Vec<u8>,
         opacity: u8,
         locked: bool,
@@ -135,6 +167,7 @@ mod platform {
         persistence_path: PathBuf,
         source_width: i32,
         source_height: i32,
+        corner_radius: i32,
         bgra: Vec<u8>,
     ) {
         let scale_percent =
@@ -146,6 +179,7 @@ mod platform {
                 persistence_path,
                 source_width,
                 source_height,
+                corner_radius,
                 bgra,
                 opacity: record.opacity,
                 locked: record.locked,
@@ -250,6 +284,7 @@ mod platform {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT.0 as isize);
         }
         persist_current(hwnd);
+        apply_sticker_region(hwnd);
         ShowWindow(hwnd, SW_SHOW);
         ShowWindow(toolbar_hwnd, SW_HIDE);
         position_toolbar(hwnd);
@@ -323,6 +358,7 @@ mod platform {
             }
             WM_MOVE | WM_SIZE => {
                 position_toolbar(hwnd);
+                apply_sticker_region(hwnd);
                 persist_current(hwnd);
                 LRESULT(0)
             }
@@ -460,6 +496,41 @@ mod platform {
             }
         });
         EndPaint(hwnd, &paint);
+    }
+
+    unsafe fn apply_sticker_region(hwnd: HWND) {
+        let mut client = RECT::default();
+        if GetClientRect(hwnd, &mut client).is_err() {
+            return;
+        }
+        let radius = STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|state| {
+                    (state.corner_radius as f64 * client.right as f64
+                        / state.source_width.max(1) as f64)
+                        .round() as i32
+                })
+                .unwrap_or(0)
+        });
+        if radius <= 0 {
+            return;
+        }
+        let region = CreateRoundRectRgn(
+            0,
+            0,
+            client.right + 1,
+            client.bottom + 1,
+            radius * 2,
+            radius * 2,
+        );
+        if region.is_invalid() {
+            return;
+        }
+        if SetWindowRgn(hwnd, Some(region), true) == 0 {
+            DeleteObject(region.into());
+        }
     }
 
     unsafe fn paint_toolbar(hwnd: HWND) {
@@ -997,5 +1068,15 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    pub fn run(_source_width: i32, _source_height: i32, _x: i32, _y: i32, _bgra: Vec<u8>) {}
+    use super::StickerRecord;
+    use std::path::PathBuf;
+    pub fn run(
+        _record: StickerRecord,
+        _path: PathBuf,
+        _source_width: i32,
+        _source_height: i32,
+        _corner_radius: i32,
+        _bgra: Vec<u8>,
+    ) {
+    }
 }

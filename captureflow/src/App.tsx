@@ -55,17 +55,17 @@ export default function App() {
     finally { setBusy(""); }
   }
 
-  async function copySelection() {
+  async function copySelection(overridePath?: string) {
     if (!selection) return;
     setError("");
     try {
-      const image = await Image.fromPath(selection.imagePath);
+      const image = await Image.fromPath(overridePath ?? selection.imagePath);
       try { await writeImage(image); } finally { await image.close(); }
       setMessage("圖片已複製到剪貼簿");
     } catch (reason) { setError(String(reason)); }
   }
 
-  async function saveSelection() {
+  async function saveSelection(overridePath?: string) {
     if (!selection) return;
     setBusy("save"); setError("");
     try {
@@ -75,18 +75,18 @@ export default function App() {
         filters: [{ name: "PNG 圖片", extensions: ["png"] }, { name: "JPEG 圖片", extensions: ["jpg", "jpeg"] }, { name: "WebP 圖片", extensions: ["webp"] }],
       });
       if (destination) {
-        await invoke("export_selection", { imagePath: selection.imagePath, destination });
+        await invoke("export_selection", { imagePath: overridePath ?? selection.imagePath, destination });
         setMessage(`已儲存：${destination}`);
       }
     } catch (reason) { setError(String(reason)); }
     finally { setBusy(""); }
   }
 
-  async function openSticker() {
+  async function openSticker(overridePath?: string) {
     if (!selection) return;
     setBusy("sticker"); setError("");
     try {
-      await invoke("open_sticker", { imagePath: selection.imagePath, x: selection.selection.x, y: selection.selection.y });
+      await invoke("open_sticker", { imagePath: overridePath ?? selection.imagePath, x: selection.selection.x, y: selection.selection.y });
       setMessage("已建立置頂貼圖");
     } catch (reason) { setError(String(reason)); }
     finally { setBusy(""); }

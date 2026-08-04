@@ -156,6 +156,16 @@ fn save_edited_image(
     annotation::save_edited_image(&app, &image_path, width, height, rgba)
 }
 
+#[tauri::command]
+fn save_composited_image(
+    app: tauri::AppHandle,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+) -> Result<String, String> {
+    annotation::save_composited_image(&app, width, height, rgba)
+}
+
 fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -239,7 +249,8 @@ pub fn run() {
             save_annotation_project,
             load_latest_annotation_project,
             load_annotation_project_from,
-            save_edited_image
+            save_edited_image,
+            save_composited_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

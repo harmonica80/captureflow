@@ -33,6 +33,38 @@ pub fn save_edited_image(
     .map_err(|error| format!("無法儲存編輯圖片：{error}"))
 }
 
+pub fn save_composited_image(
+    app: &AppHandle,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+) -> Result<String, String> {
+    if width == 0 || height == 0 || rgba.len() != width as usize * height as usize * 4 {
+        return Err("合成圖片資料尺寸不正確".into());
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis();
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("composites");
+    fs::create_dir_all(&directory).map_err(|error| format!("無法建立合成圖片資料夾：{error}"))?;
+    let output = directory.join(format!("composite-{timestamp}.png"));
+    image::save_buffer_with_format(
+        &output,
+        &rgba,
+        width,
+        height,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    )
+    .map_err(|error| format!("無法儲存合成圖片：{error}"))?;
+    Ok(output.to_string_lossy().into_owned())
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnnotationProject {

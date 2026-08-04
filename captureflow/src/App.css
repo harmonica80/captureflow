@@ -109,8 +109,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .property-bar select, .property-bar input[type="number"] { max-width: 180px; padding: 5px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }
 .property-bar button { padding: 6px 9px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }
 .property-bar button.active { border-color: #1769aa; background: #9bdcff; }
-.property-bar .text-style { min-width: 34px; font-family: Arial, sans-serif; font-size: 18px; font-weight: 800; }
-.property-bar .text-style.italic { font-style: italic; font-weight: 800; }
+.property-bar .text-style { width: 36px; min-width: 36px; height: 36px; padding: 7px; }
+.property-bar .text-style svg { display: block; width: 20px; height: 20px; }
 .annotation-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f4f7f5; background: #26332e; font-weight: 700; }
 .settings-success { color: #c9f7df; font-weight: 700; overflow-wrap: anywhere; }
 .settings-error { padding: 10px 12px; border-left: 4px solid #ff8f86; color: #ffd8d4; background: #3b1e1d; font-weight: 700; }
