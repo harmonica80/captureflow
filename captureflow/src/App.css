@@ -6,6 +6,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 
 .app-shell { min-height: 100vh; padding: 24px; background: radial-gradient(circle at 85% 0, rgba(79,219,151,.13), transparent 34%), #07110d; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 1600px; margin: 0 auto 20px; }
+.header-controls { display: flex; align-items: center; gap: 10px; }
+.theme-picker { display: grid; gap: 3px; color: #c3d2ca; font-size: 12px; font-weight: 700; }
+.theme-picker select { min-width: 100px; padding: 8px 28px 8px 9px; border: 1px solid #426653; border-radius: 9px; color: #eef7f2; background: #10231c; }
 .eyebrow, .annotation-heading span { color: #77e2ad; font-size: 11px; font-weight: 800; letter-spacing: .18em; }
 .app-header h1 { margin: 5px 0 0; font-size: clamp(24px, 3vw, 36px); }
 .header-shortcut { display: grid; gap: 3px; padding: 10px 14px; border: 1px solid #315444; border-radius: 12px; background: #10231c; text-align: right; }
@@ -106,7 +109,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .stroke-control input { width: 82px; accent-color: #1769aa; }
 .stroke-control output { min-width: 20px; text-align: center; }
 .annotation-help { margin: 9px 0; color: #c3d2ca; font-size: 13px; }
-.annotation-scroll { position: relative; max-height: calc(100vh - 270px); overflow: auto; border: 1px solid #668477; border-radius: 10px; background: #26332e; }
+.annotation-scroll { position: relative; overflow: visible; border: 1px solid #668477; border-radius: 10px; background: #26332e; }
 .annotation-stage { position: relative; width: 100%; min-width: 560px; background: #26332e; touch-action: none; user-select: none; -webkit-user-select: none; }
 .annotation-stage canvas, .annotation-stage svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 .annotation-stage .mosaic-preview { z-index: 1; pointer-events: none; }
@@ -120,10 +123,34 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .selected-box { filter: drop-shadow(0 0 2px #fff); }
 .control-point { fill: #fff; stroke: #1769aa; stroke-width: 2; cursor: grab; }
 .inline-text-input { position: absolute; z-index: 3; min-width: 1ch; max-width: calc(100% - 8px); padding: 0; border: 0; outline: 0; color: inherit; background: transparent; line-height: 1.15; }
-.zoom-control { position: sticky; z-index: 8; right: 10px; bottom: 10px; display: flex; float: right; align-items: center; gap: 4px; width: max-content; margin: -48px 10px 10px 0; padding: 5px; border: 1px solid #68766f; border-radius: 10px; color: #171717; background: #fafafa; box-shadow: 0 5px 18px #0005; }
+.zoom-dock { position: sticky; z-index: 8; right: 10px; bottom: 10px; float: right; width: max-content; margin: -48px 10px 10px 0; }
+.zoom-control { display: flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid #68766f; border-radius: 10px; color: #171717; background: #eef1f2; box-shadow: 0 5px 18px #0005; }
 .zoom-control button { min-width: 34px; height: 32px; border: 1px solid transparent; border-radius: 7px; color: #171717; background: transparent; cursor: pointer; }
 .zoom-control button:hover { border-color: #68766f; background: #e3e9e6; }
 .zoom-control output { min-width: 54px; color: #171717; font-weight: 700; text-align: center; }
+.zoom-control .zoom-value { min-width: 66px; background: #f7f8f8; }
+.zoom-menu { position: absolute; right: 0; bottom: calc(100% + 8px); display: grid; min-width: 210px; padding: 8px; border: 1px solid #aab3af; border-radius: 11px; background: #fafafa; box-shadow: 0 8px 22px #0004; }
+.zoom-menu button { display: flex; justify-content: space-between; gap: 18px; padding: 9px; border: 0; border-radius: 6px; color: #252525; background: transparent; text-align: left; cursor: pointer; }
+.zoom-menu button:hover { background: #e8ecea; }
+.zoom-menu kbd { color: #555; font: inherit; }
+
+.theme-light { color: #1d2923; background: #eef2f0; }
+.theme-light .app-header h1 { color: #14231c; }
+.theme-light .eyebrow, .theme-light .annotation-heading span { color: #087346; }
+.theme-light .header-shortcut, .theme-light .sidebar-card, .theme-light .editor-workspace { border-color: #a9bdb3; background: #fff; }
+.theme-light .header-shortcut span, .theme-light .sidebar-card p, .theme-light .current-image-card small, .theme-light .annotation-help { color: #4b5d54; }
+.theme-light .header-shortcut strong, .theme-light .sidebar-card h2, .theme-light .settings-card summary, .theme-light .current-image-card, .theme-light .app-footer { color: #17251e; }
+.theme-light .theme-picker { color: #31463c; }
+.theme-light .theme-picker select, .theme-light .capture-button, .theme-light .monitor-card button, .theme-light .history-card button, .theme-light .settings-card .folder-picker { border-color: #82998d; color: #17251e; background: #f4f7f5; }
+.theme-light .capture-button.primary { border-color: #087346; color: #fff; background: #087346; }
+.theme-light .capture-button.primary:hover { background: #075f3b; }
+.theme-light .history-toggle span, .theme-light .history-card h3, .theme-light .settings-card h3, .theme-light .current-image-card span { color: #086b42; }
+.theme-light .history-card small, .theme-light .settings-card label { color: #3c5147; }
+.theme-light .settings-card input { border-color: #82998d; color: #17251e; background: #fff; }
+.theme-light .sidebar-notice { color: #173426; background: #d9f3e5; }
+.theme-light .sidebar-notice strong { color: #075f3b; }
+.theme-light .annotation-stage, .theme-light .annotation-scroll { background: #dfe5e2; }
+.theme-light .app-footer { border-color: #a9bdb3; }
 .property-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 7px 0; padding: 8px; border: 1px solid #52685e; border-radius: 9px; color: #252525; background: #f5f5f5; }
 .property-bar label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .property-bar select, .property-bar input[type="number"] { max-width: 180px; padding: 5px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }

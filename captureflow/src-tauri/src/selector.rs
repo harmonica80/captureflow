@@ -138,6 +138,105 @@ pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, St
     Ok(Some(snapshot))
 }
 
+pub async fn select_long_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, String> {
+    let Some(mut snapshot) = select_area(app.clone()).await? else {
+        return Ok(None);
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let width = snapshot.width as usize;
+        let viewport_height = snapshot.height as usize;
+        let mut previous = image::open(&snapshot.image_path)
+            .map_err(|error| format!("無法讀取長截圖第一張畫面：{error}"))?
+            .to_rgba8()
+            .into_raw();
+        let mut stitched = previous.clone();
+        for _ in 0..30 {
+            platform::scroll_at(
+                snapshot.selection.x + snapshot.selection.width / 2,
+                snapshot.selection.y + snapshot.selection.height / 2,
+            )?;
+            std::thread::sleep(std::time::Duration::from_millis(650));
+            let frame = capture_frame()?;
+            let local = RectInfo {
+                x: snapshot.selection.x - frame.virtual_desktop.x,
+                y: snapshot.selection.y - frame.virtual_desktop.y,
+                width: snapshot.selection.width,
+                height: snapshot.selection.height,
+            };
+            let current = crop_rgba(
+                &frame.rgba,
+                frame.virtual_desktop.width,
+                frame.virtual_desktop.height,
+                local,
+            )?;
+            if frame_difference(&previous, &current) < 1.2 {
+                break;
+            }
+            let overlap = best_vertical_overlap(&previous, &current, width, viewport_height);
+            let row_bytes = width * 4;
+            stitched.extend_from_slice(&current[overlap * row_bytes..]);
+            previous = current;
+            if stitched.len() / row_bytes >= 30_000 {
+                break;
+            }
+        }
+        let total_height = stitched.len() / (width * 4);
+        image::save_buffer_with_format(
+            &snapshot.image_path,
+            &stitched,
+            width as u32,
+            total_height as u32,
+            image::ColorType::Rgba8,
+            image::ImageFormat::Png,
+        )
+        .map_err(|error| format!("無法儲存長截圖：{error}"))?;
+        snapshot.height = total_height as i32;
+        Ok::<SelectionSnapshot, String>(snapshot)
+    })
+    .await
+    .map_err(|error| format!("長截圖執行緒異常結束：{error}"))??;
+    Ok(Some(result))
+}
+
+fn frame_difference(first: &[u8], second: &[u8]) -> f64 {
+    let mut total = 0u64;
+    let mut count = 0u64;
+    for index in (0..first.len().min(second.len())).step_by(64) {
+        total += first[index].abs_diff(second[index]) as u64;
+        count += 1;
+    }
+    total as f64 / count.max(1) as f64
+}
+
+fn best_vertical_overlap(previous: &[u8], current: &[u8], width: usize, height: usize) -> usize {
+    let row = width * 4;
+    let mut best = (f64::MAX, 0usize);
+    for overlap in (height / 10..height * 9 / 10).step_by(4) {
+        let previous_start = height - overlap;
+        let mut difference = 0u64;
+        let mut samples = 0u64;
+        for y in (0..overlap).step_by(8) {
+            for x in (width / 10..width * 9 / 10).step_by(12) {
+                let a = (previous_start + y) * row + x * 4;
+                let b = y * row + x * 4;
+                difference += previous[a].abs_diff(current[b]) as u64;
+                difference += previous[a + 1].abs_diff(current[b + 1]) as u64;
+                difference += previous[a + 2].abs_diff(current[b + 2]) as u64;
+                samples += 3;
+            }
+        }
+        let score = difference as f64 / samples.max(1) as f64;
+        if score < best.0 {
+            best = (score, overlap);
+        }
+    }
+    if best.0 <= 22.0 {
+        best.1
+    } else {
+        0
+    }
+}
+
 pub fn repeat_last_area(app: AppHandle) -> Result<SelectionSnapshot, String> {
     let previous = load_last_selection(&app)?;
     let global_selection = previous.selection;
@@ -975,23 +1074,48 @@ mod platform {
             UI::{
                 HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
                 Input::KeyboardAndMouse::{
-                    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_BACK, VK_CONTROL,
-                    VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
+                    GetKeyState, ReleaseCapture, SendInput, SetCapture, SetFocus, INPUT, INPUT_0,
+                    INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT, VK_BACK, VK_CONTROL, VK_DOWN,
+                    VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
                 },
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
                     GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadCursorW,
-                    PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetForegroundWindow,
-                    SetTimer, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_CHILD,
-                    GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL,
-                    IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_SHOW,
-                    WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
-                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
-                    WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetCursorPos,
+                    SetForegroundWindow, SetTimer, ShowWindow, TranslateMessage, CS_HREDRAW,
+                    CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS,
+                    IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
+                    MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
+                    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+                    WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+                    WS_POPUP,
                 },
             },
         },
     };
+
+    pub fn scroll_at(x: i32, y: i32) -> Result<(), String> {
+        unsafe {
+            SetCursorPos(x, y).map_err(|error| format!("無法將滑鼠移至長截圖範圍：{error}"))?;
+            let input = INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: 0,
+                        dy: 0,
+                        mouseData: (-720i32) as u32,
+                        dwFlags: MOUSEEVENTF_WHEEL,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            };
+            if SendInput(&[input], size_of::<INPUT>() as i32) != 1 {
+                return Err("無法送出長截圖捲動事件".into());
+            }
+        }
+        Ok(())
+    }
 
     static STATE: std::sync::Mutex<Option<SelectorState>> = std::sync::Mutex::new(None);
     const ANNOTATION_COLORS: [u32; 10] = [
@@ -3933,6 +4057,10 @@ mod platform {
 #[cfg(not(windows))]
 mod platform {
     use crate::capture::RectInfo;
+
+    pub fn scroll_at(_x: i32, _y: i32) -> Result<(), String> {
+        Err("長截圖目前只支援 Windows".into())
+    }
 
     pub fn run_selector(
         _virtual_desktop: RectInfo,

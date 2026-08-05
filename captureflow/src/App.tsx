@@ -49,6 +49,9 @@ type HistoryEntry = {
 const RELEASES_URL = "https://github.com/harmonica80/captureflow/releases";
 
 export default function App() {
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    localStorage.getItem("captureflow-theme") === "dark" ? "dark" : "light",
+  );
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null),
     [objects, setObjects] = useState<AnnotationObject[]>([]),
     [editorKey, setEditorKey] = useState(0);
@@ -166,13 +169,15 @@ export default function App() {
       setError(String(reason));
     }
   }
-  async function runCapture(kind: "area" | "monitor", deviceName?: string) {
+  async function runCapture(kind: "area" | "long" | "monitor", deviceName?: string) {
     setBusy(kind === "monitor" ? (deviceName ?? "monitor") : kind);
     setError("");
     try {
       const result =
         kind === "area"
           ? await invoke<SelectionSnapshot | null>("select_screen_area")
+          : kind === "long"
+            ? await invoke<SelectionSnapshot | null>("select_long_screen_area")
           : await invoke<SelectionSnapshot>("capture_monitor", { deviceName });
       if (result) receiveSelection(result);
     } catch (reason) {
@@ -277,15 +282,15 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell workspace-shell">
+    <main className={`app-shell workspace-shell theme-${theme}`}>
       <header className="app-header">
         <div>
           <span className="eyebrow">CAPTUREFLOW</span>
           <h1>截圖與標註工作區</h1>
         </div>
-        <div className="header-shortcut">
-          <span>CaptureFlow {version}</span>
-          <strong>{settings?.captureShortcut ?? "Alt+Shift+A"}</strong>
+        <div className="header-controls">
+          <label className="theme-picker">色系主題<select value={theme} onChange={(event) => { const value = event.target.value as "light" | "dark"; setTheme(value); localStorage.setItem("captureflow-theme", value); }}><option value="light">淺色</option><option value="dark">深色</option></select></label>
+          <div className="header-shortcut"><span>CaptureFlow {version}</span><strong>{settings?.captureShortcut ?? "Alt+Shift+A"}</strong></div>
         </div>
       </header>
       {updateVersion && (
@@ -309,6 +314,7 @@ export default function App() {
             >
               {busy === "area" ? "框選中…" : "框選螢幕範圍"}
             </button>
+            <button className="capture-button" onClick={() => runCapture("long")} disabled={!!busy}>{busy === "long" ? "長截圖擷取中…" : "長截圖"}</button>
             <button
               className="capture-button"
               onClick={openProject}

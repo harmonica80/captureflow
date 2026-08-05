@@ -409,6 +409,7 @@ export default function AnnotationEditor({
     } | null>(null);
   const [stageScale, setStageScale] = useState(1);
   const [zoom, setZoom] = useState(100);
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const selected = objects.find((o) => o.id === selectedId),
     hover = objects.find((o) => o.id === (selectedId || hoveredId));
   const draft =
@@ -1453,11 +1454,14 @@ export default function AnnotationEditor({
             />
           )}
         </div>
-        <div className="zoom-control" role="group" aria-label="圖片縮放控制">
-          <button onClick={() => setZoom((value) => Math.max(25, value - 10))} title="縮小圖片">−</button>
-          <output aria-live="polite">{zoom}%</output>
-          <button onClick={() => setZoom((value) => Math.min(300, value + 10))} title="放大圖片">＋</button>
-          <button onClick={() => setZoom(100)} title="縮放至適合編輯區">適合</button>
+        <div className="zoom-dock">
+          {zoomMenuOpen && <div className="zoom-menu"><button onClick={() => setZoom((value) => Math.min(300, value + 10))}>放大 <kbd>Ctrl +</kbd></button><button onClick={() => setZoom((value) => Math.max(25, value - 10))}>縮小 <kbd>Ctrl −</kbd></button><button onClick={() => setZoom(100)}>縮放至 100%</button><button onClick={() => setZoom(100)}>縮放至適合大小</button></div>}
+          <div className="zoom-control" role="group" aria-label="圖片縮放控制">
+            <button onClick={() => setZoom((value) => Math.max(25, value - 10))} title="縮小圖片">−</button>
+            <button className="zoom-value" onClick={() => setZoomMenuOpen((open) => !open)} aria-expanded={zoomMenuOpen}><output aria-live="polite">{zoom}%</output></button>
+            <button onClick={() => setZoom((value) => Math.min(300, value + 10))} title="放大圖片">＋</button>
+            <button onClick={() => setZoomMenuOpen((open) => !open)} title="顯示縮放選單">«</button>
+          </div>
         </div>
       </div>
     </section>
