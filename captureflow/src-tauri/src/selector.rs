@@ -1027,8 +1027,8 @@ fn path_string(path: PathBuf) -> String {
 mod platform {
     use super::{
         apply_native_annotations, best_vertical_overlap, crop_rgba, curved_arrow_points,
-        frame_difference, pixelate_rgba_region, tapered_arrow_points, NativeAnnotation,
-        SelectedArea,
+        frame_difference, pixelate_rgba_region, tapered_arrow_points, LongCaptureResult,
+        NativeAnnotation, SelectedArea,
     };
     use crate::capture::RectInfo;
     use std::{mem::size_of, sync::mpsc};
