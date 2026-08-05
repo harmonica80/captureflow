@@ -15,6 +15,10 @@ pub const DEFAULT_SHORTCUT: &str = "Alt+Shift+A";
 pub struct AppSettings {
     pub schema_version: u32,
     pub capture_shortcut: String,
+    #[serde(default = "default_history_limit")]
+    pub history_limit: u32,
+    #[serde(default)]
+    pub default_save_directory: String,
 }
 
 impl Default for AppSettings {
@@ -22,6 +26,8 @@ impl Default for AppSettings {
         Self {
             schema_version: 1,
             capture_shortcut: DEFAULT_SHORTCUT.into(),
+            history_limit: default_history_limit(),
+            default_save_directory: String::new(),
         }
     }
 }
@@ -32,6 +38,8 @@ pub struct SettingsView {
     pub capture_shortcut: String,
     pub default_shortcut: String,
     pub log_path: String,
+    pub history_limit: u32,
+    pub default_save_directory: String,
 }
 
 #[derive(Default)]
@@ -72,6 +80,8 @@ pub fn view(app: &AppHandle) -> Result<SettingsView, String> {
         capture_shortcut: settings.capture_shortcut,
         default_shortcut: DEFAULT_SHORTCUT.into(),
         log_path: path_string(log_path(app)?),
+        history_limit: settings.history_limit,
+        default_save_directory: settings.default_save_directory,
     })
 }
 
@@ -104,6 +114,19 @@ pub fn update_shortcut(app: &AppHandle, shortcut: String) -> Result<SettingsView
     let next = AppSettings {
         schema_version: 1,
         capture_shortcut: shortcut.into(),
+        history_limit: app
+            .state::<SettingsState>()
+            .0
+            .lock()
+            .map_err(|_| "設定狀態鎖定失敗")?
+            .history_limit,
+        default_save_directory: app
+            .state::<SettingsState>()
+            .0
+            .lock()
+            .map_err(|_| "設定狀態鎖定失敗")?
+            .default_save_directory
+            .clone(),
     };
     if let Err(error) = persist(app, &next) {
         let _ = app.global_shortcut().unregister(shortcut);
@@ -116,6 +139,46 @@ pub fn update_shortcut(app: &AppHandle, shortcut: String) -> Result<SettingsView
         .lock()
         .map_err(|_| "設定狀態鎖定失敗")? = next;
     view(app)
+}
+
+pub fn update_preferences(
+    app: &AppHandle,
+    history_limit: u32,
+    default_save_directory: String,
+) -> Result<SettingsView, String> {
+    if !(1..=100).contains(&history_limit) {
+        return Err("歷史截圖記錄數量必須介於 1 到 100。".into());
+    }
+    if !default_save_directory.is_empty() && !std::path::Path::new(&default_save_directory).is_dir()
+    {
+        return Err("預設圖檔資料夾不存在。".into());
+    }
+    let mut next = app
+        .state::<SettingsState>()
+        .0
+        .lock()
+        .map_err(|_| "設定狀態鎖定失敗")?
+        .clone();
+    next.history_limit = history_limit;
+    next.default_save_directory = default_save_directory;
+    persist(app, &next)?;
+    *app.state::<SettingsState>()
+        .0
+        .lock()
+        .map_err(|_| "設定狀態鎖定失敗")? = next;
+    view(app)
+}
+
+pub fn history_limit(app: &AppHandle) -> usize {
+    app.state::<SettingsState>()
+        .0
+        .lock()
+        .map(|settings| settings.history_limit as usize)
+        .unwrap_or(20)
+}
+
+fn default_history_limit() -> u32 {
+    20
 }
 
 pub fn append_error(app: &AppHandle, context: &str, message: &str) {

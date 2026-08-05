@@ -26,12 +26,16 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .monitor-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .monitor-card button { display: grid; gap: 3px; padding: 10px; border: 1px solid #365847; border-radius: 9px; color: #e7f1ec; background: #10231c; text-align: left; cursor: pointer; }
 .monitor-card button:hover { border-color: #74e7ad; }
-.history-card { display: grid; gap: 7px; }
+.history-toggle { display: flex; align-items: center; gap: 7px; }
+.history-toggle span { width: 14px; color: #9bf2c5; }
+.history-card { display: grid; gap: 7px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #315444; }
+.history-card h3 { margin: 0 0 3px; color: #eef7f2; font-size: 14px; }
 .history-card button { display: grid; gap: 3px; padding: 9px 10px; border: 1px solid #365847; border-radius: 9px; color: #eef7f2; background: #10231c; text-align: left; cursor: pointer; }
 .history-card button:hover { border-color: #74e7ad; background: #193126; }
 .history-card small { color: #c3d2ca; }
 .monitor-card small { color: #b9c9c1; }
-.current-image-card { display: grid; gap: 5px; }
+.current-image-card { display: grid; width: 100%; gap: 5px; color: #eef7f2; text-align: left; cursor: pointer; }
+.current-image-card:hover { border-color: #74e7ad; background: #142a21; }
 .current-image-card span { color: #77e2ad; font-size: 12px; font-weight: 700; }
 .current-image-card strong { font-size: 22px; }
 .current-image-card small { overflow: hidden; color: #b9c9c1; text-overflow: ellipsis; white-space: nowrap; }
@@ -43,6 +47,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .settings-card summary { color: #e7f1ec; font-weight: 700; cursor: pointer; }
 .settings-card label { display: block; margin-top: 14px; color: #d5e5dd; font-size: 13px; }
 .settings-card input { width: 100%; margin-top: 6px; padding: 10px; border: 1px solid #527563; border-radius: 8px; color: #f4f7f5; background: #081611; }
+.settings-card h3 { margin: 18px 0 0; color: #9bf2c5; font-size: 14px; }
+.settings-card .folder-picker { width: 100%; margin-top: 6px; padding: 9px; overflow: hidden; border: 1px solid #527563; border-radius: 8px; color: #eef7f2; background: #142a21; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.capture-button.danger { border-color: #a95852; color: #ffe9e7; background: #3b1e1d; }
 .compact-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 
 .editor-workspace { min-width: 0; min-height: 70vh; padding: 18px; border: 1px solid #315444; border-radius: 18px; background: rgba(8,22,17,.94); }
@@ -99,7 +106,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .stroke-control input { width: 82px; accent-color: #1769aa; }
 .stroke-control output { min-width: 20px; text-align: center; }
 .annotation-help { margin: 9px 0; color: #c3d2ca; font-size: 13px; }
-.annotation-scroll { max-height: calc(100vh - 270px); overflow: auto; border: 1px solid #668477; border-radius: 10px; background: #26332e; }
+.annotation-scroll { position: relative; max-height: calc(100vh - 270px); overflow: auto; border: 1px solid #668477; border-radius: 10px; background: #26332e; }
 .annotation-stage { position: relative; width: 100%; min-width: 560px; background: #26332e; touch-action: none; user-select: none; -webkit-user-select: none; }
 .annotation-stage canvas, .annotation-stage svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 .annotation-stage .mosaic-preview { z-index: 1; pointer-events: none; }
@@ -113,6 +120,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .selected-box { filter: drop-shadow(0 0 2px #fff); }
 .control-point { fill: #fff; stroke: #1769aa; stroke-width: 2; cursor: grab; }
 .inline-text-input { position: absolute; z-index: 3; min-width: 1ch; max-width: calc(100% - 8px); padding: 0; border: 0; outline: 0; color: inherit; background: transparent; line-height: 1.15; }
+.zoom-control { position: sticky; z-index: 8; right: 10px; bottom: 10px; display: flex; float: right; align-items: center; gap: 4px; width: max-content; margin: -48px 10px 10px 0; padding: 5px; border: 1px solid #68766f; border-radius: 10px; color: #171717; background: #fafafa; box-shadow: 0 5px 18px #0005; }
+.zoom-control button { min-width: 34px; height: 32px; border: 1px solid transparent; border-radius: 7px; color: #171717; background: transparent; cursor: pointer; }
+.zoom-control button:hover { border-color: #68766f; background: #e3e9e6; }
+.zoom-control output { min-width: 54px; color: #171717; font-weight: 700; text-align: center; }
 .property-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 7px 0; padding: 8px; border: 1px solid #52685e; border-radius: 9px; color: #252525; background: #f5f5f5; }
 .property-bar label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .property-bar select, .property-bar input[type="number"] { max-width: 180px; padding: 5px; border: 1px solid #68766f; border-radius: 5px; color: #171717; background: #fff; }

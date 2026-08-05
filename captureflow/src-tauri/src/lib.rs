@@ -106,6 +106,34 @@ fn update_capture_shortcut(
 }
 
 #[tauri::command]
+fn update_preferences(
+    app: tauri::AppHandle,
+    history_limit: u32,
+    default_save_directory: String,
+) -> Result<settings::SettingsView, String> {
+    let view = settings::update_preferences(&app, history_limit, default_save_directory)?;
+    annotation::prune_history(&app, history_limit as usize)?;
+    Ok(view)
+}
+
+#[tauri::command]
+fn clear_capture_history(app: tauri::AppHandle) -> Result<(), String> {
+    annotation::clear_history(&app)
+}
+
+#[tauri::command]
+fn reveal_file(image_path: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{image_path}"))
+            .spawn()
+            .map_err(|error| format!("無法開啟檔案總管：{error}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn record_client_error(app: tauri::AppHandle, context: String, message: String) {
     settings::append_error(&app, &context, &message);
 }
@@ -261,6 +289,9 @@ pub fn run() {
             run_capability_diagnostics,
             get_settings,
             update_capture_shortcut,
+            update_preferences,
+            clear_capture_history,
+            reveal_file,
             record_client_error,
             save_annotation_project,
             auto_save_annotation_project,

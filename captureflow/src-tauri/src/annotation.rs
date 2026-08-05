@@ -175,7 +175,7 @@ pub fn auto_save_project(
         objects,
         Some(output.to_string_lossy().into_owned()),
     )?;
-    prune_history(app, 20)?;
+    prune_history(app, crate::settings::history_limit(app))?;
     Ok(saved)
 }
 
@@ -217,11 +217,11 @@ pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
         });
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_unix_ms));
-    entries.truncate(20);
+    entries.truncate(crate::settings::history_limit(app));
     Ok(entries)
 }
 
-fn prune_history(app: &AppHandle, keep: usize) -> Result<(), String> {
+pub fn prune_history(app: &AppHandle, keep: usize) -> Result<(), String> {
     let history_dir = app
         .path()
         .app_data_dir()
@@ -239,6 +239,32 @@ fn prune_history(app: &AppHandle, keep: usize) -> Result<(), String> {
         .collect();
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     for (_, project_path, image_path) in entries.into_iter().skip(keep) {
+        let image = std::path::PathBuf::from(image_path);
+        let _ = fs::remove_file(project_path);
+        let _ = fs::remove_file(image.with_extension("json"));
+        let _ = fs::remove_file(image);
+    }
+    Ok(())
+}
+
+pub fn clear_history(app: &AppHandle) -> Result<(), String> {
+    let history_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("history");
+    let Ok(files) = fs::read_dir(&history_dir) else {
+        return Ok(());
+    };
+    for file in files.flatten() {
+        let project_path = file.path();
+        let image_path = fs::read(&project_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<AnnotationProject>(&bytes).ok())
+            .map(|project| project.source_image);
+        let Some(image_path) = image_path else {
+            continue;
+        };
         let image = std::path::PathBuf::from(image_path);
         let _ = fs::remove_file(project_path);
         let _ = fs::remove_file(image.with_extension("json"));
