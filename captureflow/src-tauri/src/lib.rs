@@ -26,13 +26,6 @@ async fn select_screen_area(
 }
 
 #[tauri::command]
-async fn select_long_screen_area(
-    app: tauri::AppHandle,
-) -> Result<Option<selector::SelectionSnapshot>, String> {
-    selector::select_long_area(app).await
-}
-
-#[tauri::command]
 async fn repeat_last_selection(
     app: tauri::AppHandle,
 ) -> Result<selector::SelectionSnapshot, String> {
@@ -289,7 +282,6 @@ pub fn run() {
             capture_virtual_desktop,
             list_monitors,
             select_screen_area,
-            select_long_screen_area,
             repeat_last_selection,
             capture_monitor,
             open_sticker,

@@ -169,15 +169,13 @@ export default function App() {
       setError(String(reason));
     }
   }
-  async function runCapture(kind: "area" | "long" | "monitor", deviceName?: string) {
+  async function runCapture(kind: "area" | "monitor", deviceName?: string) {
     setBusy(kind === "monitor" ? (deviceName ?? "monitor") : kind);
     setError("");
     try {
       const result =
         kind === "area"
           ? await invoke<SelectionSnapshot | null>("select_screen_area")
-          : kind === "long"
-            ? await invoke<SelectionSnapshot | null>("select_long_screen_area")
           : await invoke<SelectionSnapshot>("capture_monitor", { deviceName });
       if (result) receiveSelection(result);
     } catch (reason) {
@@ -314,7 +312,6 @@ export default function App() {
             >
               {busy === "area" ? "框選中…" : "框選螢幕範圍"}
             </button>
-            <button className="capture-button" onClick={() => runCapture("long")} disabled={!!busy}>{busy === "long" ? "長截圖擷取中…" : "長截圖"}</button>
             <button
               className="capture-button"
               onClick={openProject}

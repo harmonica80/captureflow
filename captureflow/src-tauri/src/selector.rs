@@ -23,6 +23,15 @@ struct SelectedArea {
     corner_radius: i32,
     #[serde(default)]
     annotations: Vec<NativeAnnotation>,
+    #[serde(skip)]
+    long_capture: Option<LongCaptureResult>,
+}
+
+#[derive(Clone, Debug)]
+struct LongCaptureResult {
+    bgra: Vec<u8>,
+    width: i32,
+    height: i32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -126,7 +135,7 @@ pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, St
         width: local_selection.width,
         height: local_selection.height,
     };
-    let snapshot = save_selection(
+    let mut snapshot = save_selection(
         &app,
         &frame,
         local_selection,
@@ -134,68 +143,31 @@ pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, St
         selected.corner_radius,
         &selected.annotations,
     )?;
-    save_last_selection(&app, global_selection, selected.corner_radius)?;
-    Ok(Some(snapshot))
-}
-
-pub async fn select_long_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, String> {
-    let Some(mut snapshot) = select_area(app.clone()).await? else {
-        return Ok(None);
-    };
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let width = snapshot.width as usize;
-        let viewport_height = snapshot.height as usize;
-        let mut previous = image::open(&snapshot.image_path)
-            .map_err(|error| format!("無法讀取長截圖第一張畫面：{error}"))?
-            .to_rgba8()
-            .into_raw();
-        let mut stitched = previous.clone();
-        for _ in 0..30 {
-            platform::scroll_at(
-                snapshot.selection.x + snapshot.selection.width / 2,
-                snapshot.selection.y + snapshot.selection.height / 2,
-            )?;
-            std::thread::sleep(std::time::Duration::from_millis(650));
-            let frame = capture_frame()?;
-            let local = RectInfo {
-                x: snapshot.selection.x - frame.virtual_desktop.x,
-                y: snapshot.selection.y - frame.virtual_desktop.y,
-                width: snapshot.selection.width,
-                height: snapshot.selection.height,
-            };
-            let current = crop_rgba(
-                &frame.rgba,
-                frame.virtual_desktop.width,
-                frame.virtual_desktop.height,
-                local,
-            )?;
-            if frame_difference(&previous, &current) < 1.2 {
-                break;
-            }
-            let overlap = best_vertical_overlap(&previous, &current, width, viewport_height);
-            let row_bytes = width * 4;
-            stitched.extend_from_slice(&current[overlap * row_bytes..]);
-            previous = current;
-            if stitched.len() / row_bytes >= 30_000 {
-                break;
-            }
+    if let Some(long) = selected.long_capture {
+        let mut rgba = long.bgra;
+        for pixel in rgba.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
         }
-        let total_height = stitched.len() / (width * 4);
+        let long_selection = RectInfo {
+            width: long.width,
+            height: long.height,
+            ..local_selection
+        };
+        apply_native_annotations(&mut rgba, long_selection, &selected.annotations);
+        apply_rounded_alpha(&mut rgba, long.width, long.height, selected.corner_radius);
         image::save_buffer_with_format(
             &snapshot.image_path,
-            &stitched,
-            width as u32,
-            total_height as u32,
+            &rgba,
+            long.width as u32,
+            long.height as u32,
             image::ColorType::Rgba8,
             image::ImageFormat::Png,
         )
         .map_err(|error| format!("無法儲存長截圖：{error}"))?;
-        snapshot.height = total_height as i32;
-        Ok::<SelectionSnapshot, String>(snapshot)
-    })
-    .await
-    .map_err(|error| format!("長截圖執行緒異常結束：{error}"))??;
-    Ok(Some(result))
+        snapshot.height = long.height;
+    }
+    save_last_selection(&app, global_selection, selected.corner_radius)?;
+    Ok(Some(snapshot))
 }
 
 fn frame_difference(first: &[u8], second: &[u8]) -> f64 {
@@ -367,6 +339,7 @@ fn save_last_selection(
             selection,
             corner_radius,
             annotations: Vec::new(),
+            long_capture: None,
         })
         .map_err(|error| format!("無法建立上次範圍資料：{error}"))?,
     )
@@ -390,6 +363,7 @@ fn load_last_selection(app: &AppHandle) -> Result<SelectedArea, String> {
             selection,
             corner_radius: 0,
             annotations: Vec::new(),
+            long_capture: None,
         })
         .map_err(|error| format!("上次範圍資料已損壞：{error}"))
 }
@@ -1052,8 +1026,9 @@ fn path_string(path: PathBuf) -> String {
 #[cfg(windows)]
 mod platform {
     use super::{
-        apply_native_annotations, curved_arrow_points, pixelate_rgba_region, tapered_arrow_points,
-        NativeAnnotation, SelectedArea,
+        apply_native_annotations, best_vertical_overlap, crop_rgba, curved_arrow_points,
+        frame_difference, pixelate_rgba_region, tapered_arrow_points, NativeAnnotation,
+        SelectedArea,
     };
     use crate::capture::RectInfo;
     use std::{mem::size_of, sync::mpsc};
@@ -1085,35 +1060,101 @@ mod platform {
                     SetForegroundWindow, SetTimer, ShowWindow, TranslateMessage, CS_HREDRAW,
                     CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS,
                     IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
-                    MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
-                    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-                    WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-                    WS_POPUP,
+                    MSG, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY,
+                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+                    WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
+                    WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
     };
 
-    pub fn scroll_at(x: i32, y: i32) -> Result<(), String> {
-        unsafe {
-            SetCursorPos(x, y).map_err(|error| format!("無法將滑鼠移至長截圖範圍：{error}"))?;
-            let input = INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dx: 0,
-                        dy: 0,
-                        mouseData: (-720i32) as u32,
-                        dwFlags: MOUSEEVENTF_WHEEL,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
+    fn begin_long_capture(state: &mut SelectorState) -> Result<(), String> {
+        let selection = state.selection.ok_or("請先框選長截圖範圍")?;
+        let first = crop_rgba(&state.bgra, state.width, state.height, selection)?;
+        state.long_capture = Some(LongCaptureState {
+            previous_bgra: first.clone(),
+            stitched_bgra: first,
+            width: selection.width as usize,
+            viewport_height: selection.height as usize,
+        });
+        Ok(())
+    }
+
+    unsafe fn capture_long_segment(
+        state: &mut SelectorState,
+        hwnd: HWND,
+        delta: i32,
+    ) -> Result<(), String> {
+        let selection = state.selection.ok_or("長截圖範圍已遺失")?;
+        ShowWindow(hwnd, SW_HIDE);
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        SetCursorPos(
+            state.origin_x + selection.x + selection.width / 2,
+            state.origin_y + selection.y + selection.height / 2,
+        )
+        .map_err(|error| format!("無法定位長截圖游標：{error}"))?;
+        let input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: delta as u32,
+                    dwFlags: MOUSEEVENTF_WHEEL,
+                    time: 0,
+                    dwExtraInfo: 0,
                 },
-            };
-            if SendInput(&[input], size_of::<INPUT>() as i32) != 1 {
-                return Err("無法送出長截圖捲動事件".into());
-            }
+            },
+        };
+        SendInput(&[input], size_of::<INPUT>() as i32);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let frame = crate::capture::capture_frame();
+        ShowWindow(hwnd, SW_SHOW);
+        let _ = SetForegroundWindow(hwnd);
+        let frame = frame?;
+        let local = RectInfo {
+            x: state.origin_x + selection.x - frame.virtual_desktop.x,
+            y: state.origin_y + selection.y - frame.virtual_desktop.y,
+            width: selection.width,
+            height: selection.height,
+        };
+        let mut current = crop_rgba(
+            &frame.rgba,
+            frame.virtual_desktop.width,
+            frame.virtual_desktop.height,
+            local,
+        )?;
+        for pixel in current.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
         }
+        let long = state.long_capture.as_mut().ok_or("長截圖尚未啟動")?;
+        if frame_difference(&long.previous_bgra, &current) < 1.2 {
+            return Ok(());
+        }
+        let overlap = best_vertical_overlap(
+            &long.previous_bgra,
+            &current,
+            long.width,
+            long.viewport_height,
+        );
+        let row = long.width * 4;
+        long.stitched_bgra
+            .extend_from_slice(&current[overlap * row..]);
+        long.previous_bgra = current;
+        let mut full_bgra = frame.rgba;
+        for pixel in full_bgra.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        state.bgra = full_bgra;
+        state.dimmed_bgra = state.bgra.clone();
+        for pixel in state.dimmed_bgra.chunks_exact_mut(4) {
+            pixel[0] = (pixel[0] as u16 * 48 / 100) as u8;
+            pixel[1] = (pixel[1] as u16 * 48 / 100) as u8;
+            pixel[2] = (pixel[2] as u16 * 48 / 100) as u8;
+        }
+        state.composite_bgra.clone_from(&state.dimmed_bgra);
+        state.composite_rect = None;
         Ok(())
     }
 
@@ -1157,7 +1198,15 @@ mod platform {
         freehand_points: Vec<(i32, i32)>,
         next_number: u32,
         caret_visible: bool,
+        long_capture: Option<LongCaptureState>,
         sender: Option<mpsc::Sender<Option<SelectedArea>>>,
+    }
+
+    struct LongCaptureState {
+        previous_bgra: Vec<u8>,
+        stitched_bgra: Vec<u8>,
+        width: usize,
+        viewport_height: usize,
     }
 
     #[derive(Clone, Copy)]
@@ -1279,6 +1328,7 @@ mod platform {
             freehand_points: Vec::new(),
             next_number: 1,
             caret_visible: true,
+            long_capture: None,
             sender: Some(sender),
         });
 
@@ -1400,6 +1450,15 @@ mod platform {
                                             selection,
                                             corner_radius: state.corner_radius,
                                             annotations: state.annotations.clone(),
+                                            long_capture: state.long_capture.as_ref().map(|long| {
+                                                LongCaptureResult {
+                                                    bgra: long.stitched_bgra.clone(),
+                                                    width: long.width as i32,
+                                                    height: (long.stitched_bgra.len()
+                                                        / (long.width * 4))
+                                                        as i32,
+                                                }
+                                            }),
                                         };
                                         if let Some(sender) = state.sender.take() {
                                             let _ = sender.send(Some(result));
@@ -1412,6 +1471,13 @@ mod platform {
                                         );
                                     }
                                     1 => {
+                                        if state.long_capture.is_none() {
+                                            let _ = begin_long_capture(state);
+                                        } else {
+                                            state.long_capture = None;
+                                        }
+                                    }
+                                    2 => {
                                         if let Some(sender) = state.sender.take() {
                                             let _ = sender.send(None);
                                         }
@@ -1872,6 +1938,15 @@ mod platform {
                             .ok()
                             .and_then(|guard| guard.as_ref().map(|state| state.annotations.clone()))
                             .unwrap_or_default(),
+                        long_capture: STATE.lock().ok().and_then(|guard| {
+                            guard.as_ref().and_then(|state| {
+                                state.long_capture.as_ref().map(|long| LongCaptureResult {
+                                    bgra: long.stitched_bgra.clone(),
+                                    width: long.width as i32,
+                                    height: (long.stitched_bgra.len() / (long.width * 4)) as i32,
+                                })
+                            })
+                        }),
                     }));
                     let _ = DestroyWindow(hwnd);
                 }
@@ -1881,7 +1956,9 @@ mod platform {
                 let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if let Some(input) = state.text_input.as_mut() {
+                        if state.long_capture.is_some() && delta < 0 {
+                            let _ = capture_long_segment(state, hwnd, delta);
+                        } else if let Some(input) = state.text_input.as_mut() {
                             if GetKeyState(VK_SHIFT.0 as i32) < 0 {
                                 input.outline_width = (input.outline_width
                                     + if delta > 0 { 1 } else { -1 })
@@ -2102,12 +2179,21 @@ mod platform {
                             DeleteObject(button_brush.into());
 
                             draw_annotation_toolbar(dc, state, rect);
+                            draw_long_preview(dc, state, rect);
                         }
 
-                        let dimensions = format!(
-                            "{} × {} px · 圓角 {} px",
-                            rect.width, rect.height, state.corner_radius
-                        );
+                        let dimensions = if let Some(long) = state.long_capture.as_ref() {
+                            format!(
+                                "長截圖：請向下滾動 · {} × {} px",
+                                long.width,
+                                long.stitched_bgra.len() / (long.width * 4)
+                            )
+                        } else {
+                            format!(
+                                "{} × {} px · 圓角 {} px",
+                                rect.width, rect.height, state.corner_radius
+                            )
+                        };
                         let dimensions: Vec<u16> = dimensions.encode_utf16().collect();
                         let label_y = if rect.y >= 34 {
                             rect.y - 28
@@ -2377,7 +2463,7 @@ mod platform {
     }
 
     fn annotation_toolbar_rect(rect: RectInfo, width: i32, height: i32) -> RECT {
-        const TOOL_WIDTH: i32 = 116;
+        const TOOL_WIDTH: i32 = 160;
         const TOOL_HEIGHT: i32 = 44;
         const GAP: i32 = 12;
         let left = rect.x.clamp(0, (width - TOOL_WIDTH).max(0));
@@ -2523,7 +2609,7 @@ mod platform {
             }
         }
         DeleteObject(dot_brush.into());
-        for index in 0..2 {
+        for index in 0..3 {
             let left = toolbar.left + 28 + index as i32 * 44;
             if index == 1 {
                 let separator = CreatePen(PS_SOLID, 1, COLORREF(0x00D5_D5D5));
@@ -2535,17 +2621,91 @@ mod platform {
             }
             draw_toolbar_icon(
                 dc,
-                if index == 0 { 10 } else { 11 },
+                if index == 0 {
+                    10
+                } else if index == 1 {
+                    12
+                } else {
+                    11
+                },
                 left,
                 toolbar.top,
                 state.current_color,
-                false,
+                index == 1 && state.long_capture.is_some(),
             );
         }
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
         DeleteObject(border.into());
         DeleteObject(background.into());
+    }
+
+    unsafe fn draw_long_preview(
+        dc: windows::Win32::Graphics::Gdi::HDC,
+        state: &SelectorState,
+        rect: RectInfo,
+    ) {
+        let Some(long) = state.long_capture.as_ref() else {
+            return;
+        };
+        let total_height = long.stitched_bgra.len() / (long.width * 4);
+        if total_height == 0 {
+            return;
+        }
+        let mut target_width = 180.min((state.width - rect.x - rect.width - 20).max(0));
+        let mut left = rect.x + rect.width + 12;
+        if target_width < 90 {
+            target_width = 180.min((rect.x - 20).max(0));
+            left = rect.x - target_width - 12;
+        }
+        if target_width < 60 {
+            return;
+        }
+        let target_height = ((total_height as f64 / long.width as f64 * target_width as f64)
+            as i32)
+            .min(state.height - 40)
+            .max(60);
+        let top = ((state.height - target_height) / 2).max(10);
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: long.width as i32,
+                biHeight: -(total_height as i32),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        StretchDIBits(
+            dc,
+            left,
+            top,
+            target_width,
+            target_height,
+            0,
+            0,
+            long.width as i32,
+            total_height as i32,
+            Some(long.stitched_bgra.as_ptr().cast()),
+            &info,
+            DIB_RGB_COLORS,
+            SRCCOPY,
+        );
+        let border = CreatePen(PS_SOLID, 3, COLORREF(0x0074_E7AD));
+        let old_pen = SelectObject(dc, border.into());
+        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(
+            dc,
+            left - 2,
+            top - 2,
+            left + target_width + 2,
+            top + target_height + 2,
+        );
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(border.into());
     }
 
     unsafe fn draw_toolbar_icon(
@@ -2685,6 +2845,18 @@ mod platform {
                 path.line_to(30.0, 30.0);
                 path.move_to(30.0, 14.0);
                 path.line_to(14.0, 30.0);
+            }
+            12 => {
+                path.move_to(14.0, 13.0);
+                path.line_to(30.0, 31.0);
+                path.move_to(30.0, 13.0);
+                path.line_to(14.0, 31.0);
+                if let Some(left) = tiny_skia::Rect::from_xywh(9.0, 8.0, 8.0, 8.0) {
+                    path.push_oval(left);
+                }
+                if let Some(right) = tiny_skia::Rect::from_xywh(9.0, 28.0, 8.0, 8.0) {
+                    path.push_oval(right);
+                }
             }
             _ => {}
         }
@@ -4057,10 +4229,6 @@ mod platform {
 #[cfg(not(windows))]
 mod platform {
     use crate::capture::RectInfo;
-
-    pub fn scroll_at(_x: i32, _y: i32) -> Result<(), String> {
-        Err("長截圖目前只支援 Windows".into())
-    }
 
     pub fn run_selector(
         _virtual_desktop: RectInfo,
