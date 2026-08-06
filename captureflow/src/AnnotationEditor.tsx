@@ -8,13 +8,20 @@ type Point = { x: number; y: number };
 type Tool =
   | "rectangle"
   | "ellipse"
+  | "line"
   | "pen"
   | "arrow"
   | "text"
   | "number"
   | "mosaic"
   | "eraser";
-type Base = { id: string; color: string; strokeWidth: number };
+type LineStyle = "solid" | "dashed" | "dotted" | "dashDot";
+type Base = {
+  id: string;
+  color: string;
+  strokeWidth: number;
+  lineStyle?: LineStyle;
+};
 type BoxObject = Base & {
   type: "rectangle" | "ellipse" | "mosaic";
   x: number;
@@ -31,6 +38,13 @@ type ArrowObject = Base & {
   y2: number;
   cx: number;
   cy: number;
+};
+type LineObject = Base & {
+  type: "line";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
 };
 type PenObject = Base & { type: "pen"; points: Point[] };
 type TextObject = Base & {
@@ -55,6 +69,7 @@ type NumberObject = Base & {
 type Annotation =
   | BoxObject
   | ArrowObject
+  | LineObject
   | PenObject
   | TextObject
   | NumberObject;
@@ -69,6 +84,7 @@ type Props = {
   onSticker: (imagePath?: string) => Promise<void>;
   onClose: () => void;
   onStatus: (message: string, isError?: boolean) => void;
+  language?: "zh-TW" | "en";
 };
 
 const colors = [
@@ -94,15 +110,27 @@ const fonts = [
   "標楷體",
   "新細明體",
 ];
-const labels: Record<Tool, string> = {
+const labelsZh: Record<Tool, string> = {
   rectangle: "矩形",
   ellipse: "圓形",
+  line: "線條",
   pen: "畫筆",
   arrow: "箭頭",
   text: "文字",
   number: "序號",
   mosaic: "馬賽克",
   eraser: "橡皮擦",
+};
+const labelsEn: Record<Tool, string> = {
+  rectangle: "Rectangle",
+  ellipse: "Ellipse",
+  line: "Line",
+  pen: "Pen",
+  arrow: "Arrow",
+  text: "Text",
+  number: "Number",
+  mosaic: "Mosaic",
+  eraser: "Eraser",
 };
 
 function Icon({ type }: { type: Tool }) {
@@ -119,6 +147,7 @@ function Icon({ type }: { type: Tool }) {
         <rect x="4" y="5" width="16" height="14" rx="1" {...p} />
       )}
       {type === "ellipse" && <ellipse cx="12" cy="12" rx="8" ry="7" {...p} />}
+      {type === "line" && <path d="M4 18L20 6" {...p} />}
       {type === "pen" && (
         <>
           <path d="M4 20l4-1 11-11-3-3L5 16z" {...p} />
@@ -259,9 +288,36 @@ function arrowPolygon(o: ArrowObject) {
     .map((p) => `${p.x},${p.y}`)
     .join(" ");
 }
+function dashArray(style?: LineStyle, width = 1) {
+  if (style === "dashed") return `${width * 4} ${width * 2.5}`;
+  if (style === "dotted") return `${width * 0.8} ${width * 2}`;
+  if (style === "dashDot")
+    return `${width * 4} ${width * 2} ${width * 0.8} ${width * 2}`;
+  return undefined;
+}
+function arrowHeadPolygon(o: ArrowObject) {
+  const tangent = Math.max(1, Math.hypot(o.x2 - o.cx, o.y2 - o.cy));
+  const ux = (o.x2 - o.cx) / tangent,
+    uy = (o.y2 - o.cy) / tangent,
+    px = -uy,
+    py = ux,
+    length = Math.hypot(o.x2 - o.x1, o.y2 - o.y1),
+    head = Math.min(length * 0.42, Math.max(14, o.strokeWidth * 6)),
+    nx = o.x2 - ux * head,
+    ny = o.y2 - uy * head,
+    spread = o.strokeWidth * 3.2;
+  return `${o.x2},${o.y2} ${nx + px * spread},${ny + py * spread} ${nx - px * spread},${ny - py * spread}`;
+}
 function bounds(o: Annotation) {
   if (o.type === "rectangle" || o.type === "ellipse" || o.type === "mosaic")
     return { x: o.x, y: o.y, width: o.width, height: o.height };
+  if (o.type === "line")
+    return {
+      x: Math.min(o.x1, o.x2),
+      y: Math.min(o.y1, o.y2),
+      width: Math.abs(o.x2 - o.x1),
+      height: Math.abs(o.y2 - o.y1),
+    };
   if (o.type === "arrow")
     return {
       x: Math.min(o.x1, o.x2, o.cx),
@@ -298,6 +354,14 @@ function bounds(o: Annotation) {
 function move(o: Annotation, dx: number, dy: number): Annotation {
   if (o.type === "rectangle" || o.type === "ellipse" || o.type === "mosaic")
     return { ...o, x: o.x + dx, y: o.y + dy };
+  if (o.type === "line")
+    return {
+      ...o,
+      x1: o.x1 + dx,
+      y1: o.y1 + dy,
+      x2: o.x2 + dx,
+      y2: o.y2 + dy,
+    };
   if (o.type === "arrow")
     return {
       ...o,
@@ -360,7 +424,9 @@ export default function AnnotationEditor({
   onSticker,
   onClose,
   onStatus,
+  language = "zh-TW",
 }: Props) {
+  const labels = language === "en" ? labelsEn : labelsZh;
   const canvasRef = useRef<HTMLCanvasElement>(null),
     previewRef = useRef<HTMLCanvasElement>(null),
     svgRef = useRef<SVGSVGElement>(null),
@@ -369,6 +435,7 @@ export default function AnnotationEditor({
   const [tool, setTool] = useState<Tool>("rectangle"),
     [color, setColor] = useState(colors[0]),
     [strokeWidth, setStrokeWidth] = useState(4),
+    [lineStyle, setLineStyle] = useState<LineStyle>("solid"),
     [objects, setObjects] = useState<Annotation[]>(initialObjects),
     [undoStack, setUndo] = useState<Annotation[][]>([]),
     [redoStack, setRedo] = useState<Annotation[][]>([]),
@@ -718,6 +785,7 @@ export default function AnnotationEditor({
         type: tool,
         color,
         strokeWidth,
+        lineStyle,
         blockSize: tool === "mosaic" ? mosaicBlock : undefined,
         x: Math.min(start.x, end.x),
         y: Math.min(start.y, end.y),
@@ -736,6 +804,19 @@ export default function AnnotationEditor({
         y2: end.y,
         cx: (start.x + end.x) / 2,
         cy: (start.y + end.y) / 2,
+        lineStyle,
+      };
+    else if (tool === "line")
+      o = {
+        id,
+        type: "line",
+        color,
+        strokeWidth,
+        lineStyle,
+        x1: start.x,
+        y1: start.y,
+        x2: end.x,
+        y2: end.y,
       };
     else if (tool === "pen" && penPoints.length > 1)
       o = { id, type: "pen", color, strokeWidth, points: penPoints };
@@ -770,6 +851,13 @@ export default function AnnotationEditor({
     svg.setPointerCapture(e.pointerId);
     setSelected(o.id);
     setTool(o.type === "mosaic" ? "mosaic" : o.type);
+    if (
+      o.type === "rectangle" ||
+      o.type === "ellipse" ||
+      o.type === "line" ||
+      o.type === "arrow"
+    )
+      setLineStyle(o.lineStyle ?? "solid");
     setMoving({ id: o.id, origin, object: o });
   }
   function curveDown(e: React.PointerEvent<SVGCircleElement>, o: ArrowObject) {
@@ -1024,6 +1112,35 @@ export default function AnnotationEditor({
             />
             <output>{strokeWidth}</output>
           </label>
+          {(tool === "rectangle" ||
+            tool === "ellipse" ||
+            tool === "line" ||
+            tool === "arrow" ||
+            selected?.type === "rectangle" ||
+            selected?.type === "ellipse" ||
+            selected?.type === "line" ||
+            selected?.type === "arrow") && (
+            <label className="line-style-control" title="線條樣式">
+              樣式
+              <select
+                value={
+                  selected && "lineStyle" in selected
+                    ? (selected.lineStyle ?? "solid")
+                    : lineStyle
+                }
+                onChange={(event) => {
+                  const next = event.target.value as LineStyle;
+                  setLineStyle(next);
+                  if (selected) updateSelected({ lineStyle: next });
+                }}
+              >
+                <option value="solid">━━━━ 實線</option>
+                <option value="dashed">－－－－ 虛線</option>
+                <option value="dotted">•••••• 點線</option>
+                <option value="dashDot">—·—·— 點劃線</option>
+              </select>
+            </label>
+          )}
           <button
             aria-label="復原"
             title="復原"
@@ -1264,6 +1381,8 @@ export default function AnnotationEditor({
                       fill="none"
                       stroke={o.color}
                       strokeWidth={o.strokeWidth}
+                      strokeDasharray={dashArray(o.lineStyle, o.strokeWidth)}
+                      strokeLinecap="round"
                     />
                   );
                 if (o.type === "ellipse")
@@ -1278,10 +1397,39 @@ export default function AnnotationEditor({
                       fill="none"
                       stroke={o.color}
                       strokeWidth={o.strokeWidth}
+                      strokeDasharray={dashArray(o.lineStyle, o.strokeWidth)}
+                      strokeLinecap="round"
+                    />
+                  );
+                if (o.type === "line")
+                  return (
+                    <line
+                      key={o.id}
+                      {...common}
+                      x1={o.x1}
+                      y1={o.y1}
+                      x2={o.x2}
+                      y2={o.y2}
+                      stroke={o.color}
+                      strokeWidth={o.strokeWidth}
+                      strokeDasharray={dashArray(o.lineStyle, o.strokeWidth)}
+                      strokeLinecap="round"
                     />
                   );
                 if (o.type === "arrow")
-                  return (
+                  return o.lineStyle && o.lineStyle !== "solid" ? (
+                    <g key={o.id} {...common}>
+                      <path
+                        d={`M ${o.x1} ${o.y1} Q ${o.cx} ${o.cy} ${o.x2} ${o.y2}`}
+                        fill="none"
+                        stroke={o.color}
+                        strokeWidth={o.strokeWidth}
+                        strokeDasharray={dashArray(o.lineStyle, o.strokeWidth)}
+                        strokeLinecap="round"
+                      />
+                      <polygon points={arrowHeadPolygon(o)} fill={o.color} />
+                    </g>
+                  ) : (
                     <polygon
                       key={o.id}
                       {...common}
@@ -1385,6 +1533,8 @@ export default function AnnotationEditor({
                   fill="none"
                   stroke={color}
                   strokeWidth={strokeWidth}
+                  strokeDasharray={dashArray(lineStyle, strokeWidth)}
+                  strokeLinecap="round"
                 />
               )}{" "}
               {draft && tool === "ellipse" && (
@@ -1396,10 +1546,24 @@ export default function AnnotationEditor({
                   fill="none"
                   stroke={color}
                   strokeWidth={strokeWidth}
+                  strokeDasharray={dashArray(lineStyle, strokeWidth)}
+                  strokeLinecap="round"
+                />
+              )}{" "}
+              {start && current && tool === "line" && (
+                <line
+                  x1={start.x}
+                  y1={start.y}
+                  x2={current.x}
+                  y2={current.y}
+                  stroke={color}
+                  strokeWidth={strokeWidth}
+                  strokeDasharray={dashArray(lineStyle, strokeWidth)}
+                  strokeLinecap="round"
                 />
               )}{" "}
               {start && current && tool === "arrow" && (
-                <polygon
+                lineStyle === "solid" ? <polygon
                   points={arrowPolygon({
                     id: "d",
                     type: "arrow",
@@ -1413,7 +1577,10 @@ export default function AnnotationEditor({
                     strokeWidth,
                   })}
                   fill={color}
-                />
+                /> : <g>
+                  <path d={`M ${start.x} ${start.y} Q ${(start.x + current.x) / 2} ${(start.y + current.y) / 2} ${current.x} ${current.y}`} fill="none" stroke={color} strokeWidth={strokeWidth} strokeDasharray={dashArray(lineStyle, strokeWidth)} strokeLinecap="round" />
+                  <polygon points={arrowHeadPolygon({ id: "d", type: "arrow", x1: start.x, y1: start.y, x2: current.x, y2: current.y, cx: (start.x + current.x) / 2, cy: (start.y + current.y) / 2, color, strokeWidth, lineStyle })} fill={color} />
+                </g>
               )}{" "}
               {penPoints.length > 1 && (
                 <polyline

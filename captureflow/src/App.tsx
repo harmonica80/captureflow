@@ -7,6 +7,7 @@ import { Image } from "@tauri-apps/api/image";
 import { join } from "@tauri-apps/api/path";
 import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
 
 type RectInfo = { x: number; y: number; width: number; height: number };
@@ -30,6 +31,8 @@ type SettingsView = {
   logPath: string;
   historyLimit: number;
   defaultSaveDirectory: string;
+  launchAtStartup: boolean;
+  language: "zh-TW" | "en";
 };
 type Project = {
   sourceImage: string;
@@ -47,6 +50,35 @@ type HistoryEntry = {
 };
 
 const RELEASES_URL = "https://github.com/harmonica80/captureflow/releases";
+type Language = "zh-TW" | "en";
+const copy = {
+  "zh-TW": {
+    title: "截圖與標註工作區", theme: "色系主題", light: "淺色", dark: "深色",
+    create: "建立截圖", createHelp: "桌面模式只負責選取範圍；完成後會自動回到右側編輯器。",
+    select: "框選螢幕範圍", selecting: "框選中…", openProject: "開啟 JSON 專案",
+    history: "歷史截圖記錄", monitors: "擷取整個螢幕", screen: "螢幕", current: "目前圖片",
+    preferences: "偏好設定", shortcut: "快捷鍵", globalShortcut: "全域框選快捷鍵", apply: "套用", reset: "預設",
+    historyCount: "保留記錄數量", clearHistory: "清除歷史截圖記錄", saveImage: "圖片儲存",
+    saveFolder: "預設儲存圖檔資料夾", chooseFolder: "選擇資料夾…", startup: "系統啟動時自動執行",
+    language: "介面語言", traditionalChinese: "繁體中文", english: "英文", savePreferences: "儲存偏好設定",
+    emptyTitle: "尚未載入截圖", emptyHelp: "可從左側框選螢幕、選擇螢幕，或直接開啟以前的 JSON 專案。",
+    start: "開始框選", closeTitle: "關閉 CaptureFlow", closeQuestion: "您要最小化視窗還是結束應用程式？",
+    minimize: "最小化視窗", quit: "結束應用程式", cancel: "取消",
+  },
+  en: {
+    title: "Screenshot & Annotation Workspace", theme: "Theme", light: "Light", dark: "Dark",
+    create: "New Capture", createHelp: "Select on the desktop, then continue editing in this window.",
+    select: "Select Screen Area", selecting: "Selecting…", openProject: "Open JSON Project",
+    history: "Capture History", monitors: "Capture Full Display", screen: "Display", current: "Current Image",
+    preferences: "Preferences", shortcut: "Shortcut", globalShortcut: "Global capture shortcut", apply: "Apply", reset: "Default",
+    historyCount: "History limit", clearHistory: "Clear capture history", saveImage: "Image Storage",
+    saveFolder: "Default image folder", chooseFolder: "Choose folder…", startup: "Run when Windows starts",
+    language: "Language", traditionalChinese: "Traditional Chinese", english: "English", savePreferences: "Save Preferences",
+    emptyTitle: "No screenshot loaded", emptyHelp: "Select an area, capture a display, or open an existing JSON project.",
+    start: "Start Capture", closeTitle: "Close CaptureFlow", closeQuestion: "Would you like to minimize the window or quit the application?",
+    minimize: "Minimize Window", quit: "Quit Application", cancel: "Cancel",
+  },
+} as const;
 
 export default function App() {
   const [theme, setTheme] = useState<"light" | "dark">(() =>
@@ -62,11 +94,16 @@ export default function App() {
     [shortcutDraft, setShortcutDraft] = useState(""),
     [historyLimitDraft, setHistoryLimitDraft] = useState(20),
     [saveDirectoryDraft, setSaveDirectoryDraft] = useState(""),
+    [startupDraft, setStartupDraft] = useState(false),
+    [languageDraft, setLanguageDraft] = useState<Language>("zh-TW"),
     [version, setVersion] = useState("0.1.0"),
     [updateVersion, setUpdateVersion] = useState("");
   const [busy, setBusy] = useState(""),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
+  const [closePrompt, setClosePrompt] = useState(false);
+  const language: Language = settings?.language ?? languageDraft;
+  const t = copy[language];
 
   async function refreshHistory() {
     try {
@@ -113,6 +150,9 @@ export default function App() {
         setShortcutDraft(value.captureShortcut);
         setHistoryLimitDraft(value.historyLimit);
         setSaveDirectoryDraft(value.defaultSaveDirectory);
+        setStartupDraft(value.launchAtStartup);
+        setLanguageDraft(value.language);
+        document.documentElement.lang = value.language;
       })
       .catch((reason) => setError(String(reason)));
     void invoke<MonitorInfo[]>("list_monitors")
@@ -130,6 +170,15 @@ export default function App() {
       void completed.then((fn) => fn());
       void failed.then((fn) => fn());
     };
+  }, []);
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    const listener = appWindow.onCloseRequested((event) => {
+      event.preventDefault();
+      setClosePrompt(true);
+    });
+    return () => { void listener.then((unlisten) => unlisten()); };
   }, []);
 
   async function loadProjectPath(projectPath: string) {
@@ -258,8 +307,13 @@ export default function App() {
       const updated = await invoke<SettingsView>("update_preferences", {
         historyLimit: historyLimitDraft,
         defaultSaveDirectory: saveDirectoryDraft,
+        launchAtStartup: startupDraft,
+        language: languageDraft,
       });
       setSettings(updated);
+      setLanguageDraft(updated.language);
+      setStartupDraft(updated.launchAtStartup);
+      document.documentElement.lang = updated.language;
       await refreshHistory();
       setMessage("偏好設定已儲存");
       setError("");
@@ -284,10 +338,10 @@ export default function App() {
       <header className="app-header">
         <div>
           <span className="eyebrow">CAPTUREFLOW</span>
-          <h1>截圖與標註工作區</h1>
+          <h1>{t.title}</h1>
         </div>
         <div className="header-controls">
-          <label className="theme-picker">色系主題<select value={theme} onChange={(event) => { const value = event.target.value as "light" | "dark"; setTheme(value); localStorage.setItem("captureflow-theme", value); }}><option value="light">淺色</option><option value="dark">深色</option></select></label>
+          <label className="theme-picker">{t.theme}<select value={theme} onChange={(event) => { const value = event.target.value as "light" | "dark"; setTheme(value); localStorage.setItem("captureflow-theme", value); }}><option value="light">{t.light}</option><option value="dark">{t.dark}</option></select></label>
           <div className="header-shortcut"><span>CaptureFlow {version}</span><strong>{settings?.captureShortcut ?? "Alt+Shift+A"}</strong></div>
         </div>
       </header>
@@ -303,21 +357,21 @@ export default function App() {
       <div className="workspace-layout">
         <aside className="capture-sidebar" aria-label="擷取控制">
           <section className="sidebar-card">
-            <h2>建立截圖</h2>
-            <p>桌面模式只負責選取範圍；完成後會自動回到右側編輯器。</p>
+            <h2>{t.create}</h2>
+            <p>{t.createHelp}</p>
             <button
               className="capture-button primary"
               onClick={() => runCapture("area")}
               disabled={!!busy}
             >
-              {busy === "area" ? "框選中…" : "框選螢幕範圍"}
+              {busy === "area" ? t.selecting : t.select}
             </button>
             <button
               className="capture-button"
               onClick={openProject}
               disabled={!!busy}
             >
-              開啟 JSON 專案
+              {t.openProject}
             </button>
             <button
               className="capture-button history-toggle"
@@ -325,7 +379,7 @@ export default function App() {
               aria-expanded={historyOpen}
             >
               <span aria-hidden="true">{historyOpen ? "▼" : "▶"}</span>
-              歷史截圖記錄 ({history.length})
+              {t.history} ({history.length})
             </button>
             {historyOpen && <div className="history-card">
               <h3>最近 {settings?.historyLimit ?? 20} 筆</h3>
@@ -349,7 +403,7 @@ export default function App() {
             </div>}
           </section>
           <section className="sidebar-card monitor-card">
-            <h2>擷取整個螢幕</h2>
+            <h2>{t.monitors}</h2>
             <div className="monitor-buttons">
               {monitors.map((monitor, index) => (
                 <button
@@ -358,14 +412,14 @@ export default function App() {
                   disabled={!!busy}
                   title={monitor.deviceName}
                 >
-                  螢幕 {index + 1}
+                  {t.screen} {index + 1}
                 </button>
               ))}
             </div>
           </section>
           {selection && (
             <button className="sidebar-card current-image-card" onClick={revealCurrentImage} title="在檔案總管顯示目前圖片">
-              <span>目前圖片</span>
+              <span>{t.current}</span>
               <strong>
                 {selection.width} × {selection.height}
               </strong>
@@ -374,9 +428,9 @@ export default function App() {
           )}
           {settings && (
             <details className="sidebar-card settings-card">
-              <summary>偏好設定</summary>
-              <h3>快捷鍵</h3>
-              <label htmlFor="capture-shortcut">全域框選快捷鍵</label>
+              <summary>{t.preferences}</summary>
+              <h3>{t.shortcut}</h3>
+              <label htmlFor="capture-shortcut">{t.globalShortcut}</label>
               <input
                 id="capture-shortcut"
                 value={shortcutDraft}
@@ -387,23 +441,29 @@ export default function App() {
                   className="capture-button primary"
                   onClick={() => applyShortcut(shortcutDraft)}
                 >
-                  套用
+                  {t.apply}
                 </button>
                 <button
                   className="capture-button"
                   onClick={() => applyShortcut(settings.defaultShortcut)}
                 >
-                  預設
+                  {t.reset}
                 </button>
               </div>
-              <h3>歷史截圖記錄</h3>
-              <label htmlFor="history-limit">保留記錄數量</label>
+              <h3>{t.history}</h3>
+              <label htmlFor="history-limit">{t.historyCount}</label>
               <input id="history-limit" type="number" min="1" max="100" value={historyLimitDraft} onChange={(event) => setHistoryLimitDraft(Number(event.target.value))}/>
-              <button className="capture-button danger" onClick={clearHistory}>清除歷史截圖記錄</button>
-              <h3>圖片儲存</h3>
-              <label>預設儲存圖檔資料夾</label>
-              <button className="folder-picker" onClick={chooseSaveDirectory} title={saveDirectoryDraft || "尚未設定"}>{saveDirectoryDraft || "選擇資料夾…"}</button>
-              <button className="capture-button primary" onClick={applyPreferences}>儲存偏好設定</button>
+              <button className="capture-button danger" onClick={clearHistory}>{t.clearHistory}</button>
+              <h3>{t.saveImage}</h3>
+              <label>{t.saveFolder}</label>
+              <button className="folder-picker" onClick={chooseSaveDirectory} title={saveDirectoryDraft || t.chooseFolder}>{saveDirectoryDraft || t.chooseFolder}</button>
+              <label className="check-setting"><input type="checkbox" checked={startupDraft} onChange={(event) => setStartupDraft(event.target.checked)} />{t.startup}</label>
+              <label htmlFor="language-setting">{t.language}</label>
+              <select id="language-setting" value={languageDraft} onChange={(event) => setLanguageDraft(event.target.value as Language)}>
+                <option value="zh-TW">{t.traditionalChinese}</option>
+                <option value="en">{t.english}</option>
+              </select>
+              <button className="capture-button primary" onClick={applyPreferences}>{t.savePreferences}</button>
             </details>
           )}
           {(message || error) && (
@@ -433,17 +493,18 @@ export default function App() {
                   ? (setError(status), setMessage(""))
                   : (setMessage(status), setError(""));
               }}
+              language={language}
             />
           ) : (
             <div className="empty-workspace">
               <div className="empty-icon">＋</div>
-              <h2>尚未載入截圖</h2>
-              <p>可從左側框選螢幕、選擇螢幕，或直接開啟以前的 JSON 專案。</p>
+              <h2>{t.emptyTitle}</h2>
+              <p>{t.emptyHelp}</p>
               <button
                 className="capture-button primary"
                 onClick={() => runCapture("area")}
               >
-                開始框選
+                {t.start}
               </button>
             </div>
           )}
@@ -466,6 +527,19 @@ export default function App() {
           CaptureFlow GitHub 專案
         </a>
       </footer>
+      {closePrompt && (
+        <div className="close-dialog-backdrop" role="presentation">
+          <section className="close-dialog" role="dialog" aria-modal="true" aria-labelledby="close-dialog-title">
+            <h2 id="close-dialog-title">{t.closeTitle}</h2>
+            <p>{t.closeQuestion}</p>
+            <div className="close-dialog-actions">
+              <button className="capture-button primary" onClick={async () => { setClosePrompt(false); await getCurrentWindow().hide(); }}>{t.minimize}</button>
+              <button className="capture-button danger" onClick={() => void getCurrentWindow().destroy()}>{t.quit}</button>
+              <button className="capture-button" onClick={() => setClosePrompt(false)}>{t.cancel}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

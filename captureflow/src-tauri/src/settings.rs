@@ -19,6 +19,10 @@ pub struct AppSettings {
     pub history_limit: u32,
     #[serde(default)]
     pub default_save_directory: String,
+    #[serde(default)]
+    pub launch_at_startup: bool,
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 impl Default for AppSettings {
@@ -28,6 +32,8 @@ impl Default for AppSettings {
             capture_shortcut: DEFAULT_SHORTCUT.into(),
             history_limit: default_history_limit(),
             default_save_directory: String::new(),
+            launch_at_startup: false,
+            language: default_language(),
         }
     }
 }
@@ -40,6 +46,8 @@ pub struct SettingsView {
     pub log_path: String,
     pub history_limit: u32,
     pub default_save_directory: String,
+    pub launch_at_startup: bool,
+    pub language: String,
 }
 
 #[derive(Default)]
@@ -47,6 +55,9 @@ pub struct SettingsState(pub Mutex<AppSettings>);
 
 pub fn initialize(app: &AppHandle) -> Result<(), String> {
     let mut settings = load(app).unwrap_or_default();
+    if settings.launch_at_startup {
+        configure_startup(true)?;
+    }
     if let Err(error) = app
         .global_shortcut()
         .register(settings.capture_shortcut.as_str())
@@ -82,6 +93,8 @@ pub fn view(app: &AppHandle) -> Result<SettingsView, String> {
         log_path: path_string(log_path(app)?),
         history_limit: settings.history_limit,
         default_save_directory: settings.default_save_directory,
+        launch_at_startup: settings.launch_at_startup,
+        language: settings.language,
     })
 }
 
@@ -111,23 +124,13 @@ pub fn update_shortcut(app: &AppHandle, shortcut: String) -> Result<SettingsView
         return Err(message);
     }
 
-    let next = AppSettings {
-        schema_version: 1,
-        capture_shortcut: shortcut.into(),
-        history_limit: app
-            .state::<SettingsState>()
-            .0
-            .lock()
-            .map_err(|_| "設定狀態鎖定失敗")?
-            .history_limit,
-        default_save_directory: app
-            .state::<SettingsState>()
-            .0
-            .lock()
-            .map_err(|_| "設定狀態鎖定失敗")?
-            .default_save_directory
-            .clone(),
-    };
+    let mut next = app
+        .state::<SettingsState>()
+        .0
+        .lock()
+        .map_err(|_| "設定狀態鎖定失敗")?
+        .clone();
+    next.capture_shortcut = shortcut.into();
     if let Err(error) = persist(app, &next) {
         let _ = app.global_shortcut().unregister(shortcut);
         let _ = app.global_shortcut().register(old.as_str());
@@ -145,6 +148,8 @@ pub fn update_preferences(
     app: &AppHandle,
     history_limit: u32,
     default_save_directory: String,
+    launch_at_startup: bool,
+    language: String,
 ) -> Result<SettingsView, String> {
     if !(1..=100).contains(&history_limit) {
         return Err("歷史截圖記錄數量必須介於 1 到 100。".into());
@@ -152,6 +157,9 @@ pub fn update_preferences(
     if !default_save_directory.is_empty() && !std::path::Path::new(&default_save_directory).is_dir()
     {
         return Err("預設圖檔資料夾不存在。".into());
+    }
+    if !matches!(language.as_str(), "zh-TW" | "en") {
+        return Err("語言設定只支援繁體中文或英文。".into());
     }
     let mut next = app
         .state::<SettingsState>()
@@ -161,6 +169,9 @@ pub fn update_preferences(
         .clone();
     next.history_limit = history_limit;
     next.default_save_directory = default_save_directory;
+    next.launch_at_startup = launch_at_startup;
+    next.language = language;
+    configure_startup(launch_at_startup)?;
     persist(app, &next)?;
     *app.state::<SettingsState>()
         .0
@@ -179,6 +190,48 @@ pub fn history_limit(app: &AppHandle) -> usize {
 
 fn default_history_limit() -> u32 {
     20
+}
+
+fn default_language() -> String {
+    "zh-TW".into()
+}
+
+#[cfg(windows)]
+fn configure_startup(enabled: bool) -> Result<(), String> {
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+    let mut command = std::process::Command::new("reg.exe");
+    if enabled {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("無法取得 CaptureFlow 執行路徑：{error}"))?;
+        command.args([
+            "add",
+            key,
+            "/v",
+            "CaptureFlow",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &format!("\"{}\"", executable.display()),
+            "/f",
+        ]);
+    } else {
+        command.args(["delete", key, "/v", "CaptureFlow", "/f"]);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("無法更新開機自動執行設定：{error}"))?;
+    if enabled && !output.status.success() {
+        return Err(format!(
+            "無法啟用開機自動執行：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn configure_startup(_enabled: bool) -> Result<(), String> {
+    Ok(())
 }
 
 pub fn append_error(app: &AppHandle, context: &str, message: &str) {

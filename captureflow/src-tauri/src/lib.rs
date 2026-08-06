@@ -110,8 +110,16 @@ fn update_preferences(
     app: tauri::AppHandle,
     history_limit: u32,
     default_save_directory: String,
+    launch_at_startup: bool,
+    language: String,
 ) -> Result<settings::SettingsView, String> {
-    let view = settings::update_preferences(&app, history_limit, default_save_directory)?;
+    let view = settings::update_preferences(
+        &app,
+        history_limit,
+        default_save_directory,
+        launch_at_startup,
+        language,
+    )?;
     annotation::prune_history(&app, history_limit as usize)?;
     Ok(view)
 }

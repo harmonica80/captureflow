@@ -129,8 +129,8 @@ mod platform {
                     SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_DEFERERASE,
                     SWP_NOACTIVATE, SWP_NOCOPYBITS, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY,
                     WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST,
-                    WM_NCRBUTTONUP, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WNDCLASSW,
-                    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+                    WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+                    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
                 },
             },
         },
@@ -352,10 +352,6 @@ mod platform {
                 toggle_click_through(hwnd);
                 LRESULT(0)
             }
-            WM_RBUTTONUP | WM_NCRBUTTONUP => {
-                close_sticker(hwnd);
-                LRESULT(0)
-            }
             WM_MOVE | WM_SIZE => {
                 position_toolbar(hwnd);
                 apply_sticker_region(hwnd);
@@ -436,13 +432,6 @@ mod platform {
                 let sticker = sticker_hwnd();
                 if !sticker.is_invalid() {
                     toggle_click_through(sticker);
-                }
-                LRESULT(0)
-            }
-            WM_RBUTTONUP | WM_NCRBUTTONUP => {
-                let sticker = sticker_hwnd();
-                if !sticker.is_invalid() {
-                    close_sticker(sticker);
                 }
                 LRESULT(0)
             }

@@ -50,6 +50,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .settings-card summary { color: #e7f1ec; font-weight: 700; cursor: pointer; }
 .settings-card label { display: block; margin-top: 14px; color: #d5e5dd; font-size: 13px; }
 .settings-card input { width: 100%; margin-top: 6px; padding: 10px; border: 1px solid #527563; border-radius: 8px; color: #f4f7f5; background: #081611; }
+.settings-card select { width: 100%; margin-top: 6px; padding: 9px; border: 1px solid #527563; border-radius: 8px; color: #f4f7f5; background: #081611; }
+.settings-card .check-setting { display: flex; align-items: center; gap: 8px; }
+.settings-card .check-setting input { width: 18px; height: 18px; margin: 0; padding: 0; accent-color: #16875d; }
 .settings-card h3 { margin: 18px 0 0; color: #9bf2c5; font-size: 14px; }
 .settings-card .folder-picker { width: 100%; margin-top: 6px; padding: 9px; overflow: hidden; border: 1px solid #527563; border-radius: 8px; color: #eef7f2; background: #142a21; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .capture-button.danger { border-color: #a95852; color: #ffe9e7; background: #3b1e1d; }
@@ -108,6 +111,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .stroke-control { display: flex; align-items: center; gap: 6px; color: #252525; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .stroke-control input { width: 82px; accent-color: #1769aa; }
 .stroke-control output { min-width: 20px; text-align: center; }
+.line-style-control { display: flex; align-items: center; gap: 5px; color: #252525; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.line-style-control select { max-width: 135px; padding: 6px; border: 1px solid #68766f; border-radius: 6px; color: #171717; background: #fff; }
 .annotation-help { margin: 9px 0; color: #c3d2ca; font-size: 13px; }
 .annotation-scroll { position: relative; overflow: visible; border: 1px solid #668477; border-radius: 10px; background: #26332e; }
 .annotation-stage { position: relative; width: 100%; min-width: 560px; background: #26332e; touch-action: none; user-select: none; -webkit-user-select: none; }
@@ -146,7 +151,14 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .theme-light .capture-button.primary:hover { background: #075f3b; }
 .theme-light .history-toggle span, .theme-light .history-card h3, .theme-light .settings-card h3, .theme-light .current-image-card span { color: #086b42; }
 .theme-light .history-card small, .theme-light .settings-card label { color: #3c5147; }
-.theme-light .settings-card input { border-color: #82998d; color: #17251e; background: #fff; }
+.theme-light .settings-card input, .theme-light .settings-card select { border-color: #82998d; color: #17251e; background: #fff; }
+.close-dialog-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: #0009; }
+.close-dialog { width: min(460px, 100%); padding: 24px; border: 1px solid #6f8d7e; border-radius: 16px; color: #f4f7f5; background: #10231c; box-shadow: 0 20px 60px #0008; }
+.close-dialog h2 { margin: 0 0 10px; }
+.close-dialog p { color: #e0ebe5; }
+.close-dialog-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 20px; }
+.theme-light .close-dialog { border-color: #7e9589; color: #17251e; background: #fff; }
+.theme-light .close-dialog p { color: #35483f; }
 .theme-light .sidebar-notice { color: #173426; background: #d9f3e5; }
 .theme-light .sidebar-notice strong { color: #075f3b; }
 .theme-light .annotation-stage, .theme-light .annotation-scroll { background: #dfe5e2; }
