@@ -1049,20 +1049,20 @@ mod platform {
             UI::{
                 HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
                 Input::KeyboardAndMouse::{
-                    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_BACK, VK_CONTROL,
-                    VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
+                    EnableWindow, GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_BACK,
+                    VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
                 },
                 WindowsAndMessaging::{
-                    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnableWindow,
-                    GetMessageW, GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer,
-                    LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassW, SetCursor,
-                    SetForegroundWindow, SetTimer, SetWindowDisplayAffinity, ShowWindow,
-                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
-                    IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS,
-                    IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_SHOW, WDA_EXCLUDEFROMCAPTURE,
-                    WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
-                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
-                    WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+                    GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadCursorW,
+                    PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetForegroundWindow,
+                    SetTimer, SetWindowDisplayAffinity, ShowWindow, TranslateMessage, CS_HREDRAW,
+                    CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS,
+                    IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
+                    MSG, SW_SHOW, WDA_EXCLUDEFROMCAPTURE, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE,
+                    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW,
+                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -1101,7 +1101,7 @@ mod platform {
         let wheel_lparam = LPARAM(
             (((screen_y as i16 as u16 as u32) << 16) | screen_x as i16 as u16 as u32) as isize,
         );
-        PostMessageW(target, WM_MOUSEWHEEL, wheel_wparam, wheel_lparam)
+        PostMessageW(Some(target), WM_MOUSEWHEEL, wheel_wparam, wheel_lparam)
             .map_err(|error| format!("無法轉送長截圖捲動事件：{error}"))?;
         std::thread::sleep(std::time::Duration::from_millis(500));
         let frame = crate::capture::capture_frame();
