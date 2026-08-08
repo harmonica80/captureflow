@@ -109,10 +109,11 @@ mod platform {
                 Gdi::{
                     BeginPaint, CreatePen, CreateRoundRectRgn, CreateSolidBrush, DeleteObject,
                     EndPaint, FillRect, GetStockObject, InvalidateRect, LineTo, MoveToEx,
-                    Rectangle, RedrawWindow, SelectObject, SetBkMode, SetTextColor, SetWindowRgn,
-                    StretchDIBits, TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-                    DEFAULT_GUI_FONT, DIB_RGB_COLORS, NULL_BRUSH, PAINTSTRUCT, PS_SOLID,
-                    RDW_INVALIDATE, RDW_NOERASE, RDW_UPDATENOW, SRCCOPY, TRANSPARENT,
+                    Rectangle, RedrawWindow, SelectObject, SetBkMode, SetBrushOrgEx,
+                    SetStretchBltMode, SetTextColor, SetWindowRgn, StretchDIBits, TextOutW,
+                    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DEFAULT_GUI_FONT, DIB_RGB_COLORS,
+                    HALFTONE, NULL_BRUSH, PAINTSTRUCT, PS_SOLID, RDW_INVALIDATE, RDW_NOERASE,
+                    RDW_UPDATENOW, SRCCOPY, TRANSPARENT,
                 },
             },
             System::LibraryLoader::GetModuleHandleW,
@@ -459,6 +460,10 @@ mod platform {
                         },
                         ..Default::default()
                     };
+                    // HALFTONE provides substantially better down-sampling than the
+                    // default COLORONCOLOR mode when a pinned image is made smaller.
+                    SetStretchBltMode(dc, HALFTONE);
+                    SetBrushOrgEx(dc, 0, 0, None);
                     StretchDIBits(
                         dc,
                         0,

@@ -1,6 +1,6 @@
 [package]
 name = "captureflow"
-version = "0.4.2"
+version = "0.4.3"
 description = "CaptureFlow Windows screenshot and visual workflow tool"
 authors = ["CaptureFlow contributors"]
 edition = "2021"

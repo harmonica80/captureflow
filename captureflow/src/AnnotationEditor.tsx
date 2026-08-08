@@ -429,9 +429,11 @@ export default function AnnotationEditor({
   const labels = language === "en" ? labelsEn : labelsZh;
   const canvasRef = useRef<HTMLCanvasElement>(null),
     previewRef = useRef<HTMLCanvasElement>(null),
+    minimapRef = useRef<HTMLCanvasElement>(null),
     svgRef = useRef<SVGSVGElement>(null),
     inputRef = useRef<HTMLInputElement>(null),
-    stageRef = useRef<HTMLDivElement>(null);
+    stageRef = useRef<HTMLDivElement>(null),
+    scrollRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<Tool>("rectangle"),
     [color, setColor] = useState(colors[0]),
     [strokeWidth, setStrokeWidth] = useState(4),
@@ -478,6 +480,7 @@ export default function AnnotationEditor({
   const [stageScale, setStageScale] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
+  const [viewport, setViewport] = useState({ x: 0, y: 0, width: 100, height: 100 });
   const selected = objects.find((o) => o.id === selectedId),
     hover = objects.find((o) => o.id === (selectedId || hoveredId));
   const draft =
@@ -616,6 +619,56 @@ export default function AnnotationEditor({
     observer.observe(stage);
     return () => observer.disconnect();
   }, [width]);
+  useEffect(() => {
+    const base = canvasRef.current;
+    const minimap = minimapRef.current;
+    if (!base || !minimap || loading) return;
+    const frame = requestAnimationFrame(() => {
+      const context = minimap.getContext("2d");
+      context?.clearRect(0, 0, width, height);
+      context?.drawImage(base, 0, 0, width, height);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loading, imagePath, width, height]);
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    const stage = stageRef.current;
+    if (!scroll || !stage) return;
+    const updateViewport = () => {
+      const scrollWidth = Math.max(1, scroll.scrollWidth);
+      const scrollHeight = Math.max(1, scroll.scrollHeight);
+      setViewport({
+        x: (scroll.scrollLeft / scrollWidth) * 100,
+        y: (scroll.scrollTop / scrollHeight) * 100,
+        width: Math.min(100, (scroll.clientWidth / scrollWidth) * 100),
+        height: Math.min(100, (scroll.clientHeight / scrollHeight) * 100),
+      });
+    };
+    updateViewport();
+    scroll.addEventListener("scroll", updateViewport, { passive: true });
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(scroll);
+    observer.observe(stage);
+    return () => {
+      scroll.removeEventListener("scroll", updateViewport);
+      observer.disconnect();
+    };
+  }, [zoom, width, height]);
+  function panFromNavigator(event: React.PointerEvent<HTMLDivElement>) {
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+    scroll.scrollLeft = Math.max(
+      0,
+      Math.min(scroll.scrollWidth - scroll.clientWidth, x * scroll.scrollWidth - scroll.clientWidth / 2),
+    );
+    scroll.scrollTop = Math.max(
+      0,
+      Math.min(scroll.scrollHeight - scroll.clientHeight, y * scroll.scrollHeight - scroll.clientHeight / 2),
+    );
+  }
   useEffect(() => {
     if (error) onStatus(error, true);
     else if (message) onStatus(message);
@@ -1351,7 +1404,12 @@ export default function AnnotationEditor({
         {labels[tool]}工具 · 滑過或選取物件後可用滾輪調整粗細或大小 ·
         箭頭中央節點可調整彎曲 · Ctrl+Z 復原
       </p>
-      <div className="annotation-scroll">
+      <div className="annotation-canvas-shell">
+        <div
+          ref={scrollRef}
+          className="annotation-scroll"
+          style={{ aspectRatio: `${width}/${height}` }}
+        >
         <div
           ref={stageRef}
           className="annotation-stage"
@@ -1636,13 +1694,37 @@ export default function AnnotationEditor({
             />
           )}
         </div>
+        </div>
         <div className="zoom-dock">
-          {zoomMenuOpen && <div className="zoom-menu"><button onClick={() => setZoom((value) => Math.min(100, value + 10))} disabled={zoom >= 100}>放大 <kbd>Ctrl +</kbd></button><button onClick={() => setZoom((value) => Math.max(25, value - 10))}>縮小 <kbd>Ctrl −</kbd></button><button onClick={() => setZoom(100)}>縮放至 100%</button><button onClick={() => setZoom(100)}>縮放至適合大小</button></div>}
+          {zoomMenuOpen && <div className="zoom-menu"><button onClick={() => setZoom((value) => Math.min(300, value + 10))} disabled={zoom >= 300}>放大 <kbd>Ctrl +</kbd></button><button onClick={() => setZoom((value) => Math.max(25, value - 10))}>縮小 <kbd>Ctrl −</kbd></button><button onClick={() => setZoom(100)}>縮放至 100%</button><button onClick={() => setZoom(100)}>縮放至適合大小</button></div>}
           <div className="zoom-control" role="group" aria-label="圖片縮放控制">
             <button onClick={() => setZoom((value) => Math.max(25, value - 10))} title="縮小圖片">−</button>
             <button className="zoom-value" onClick={() => setZoomMenuOpen((open) => !open)} aria-expanded={zoomMenuOpen}><output aria-live="polite">{zoom}%</output></button>
-            <button onClick={() => setZoom((value) => Math.min(100, value + 10))} disabled={zoom >= 100} title={zoom >= 100 ? "已達適合視窗的最大比例" : "放大圖片"}>＋</button>
+            <button onClick={() => setZoom((value) => Math.min(300, value + 10))} disabled={zoom >= 300} title={zoom >= 300 ? "已達最大縮放比例" : "放大圖片"}>＋</button>
             <button onClick={() => setZoomMenuOpen((open) => !open)} title="顯示縮放選單">«</button>
+          </div>
+          <div
+            className="zoom-minimap"
+            role="application"
+            aria-label="圖片縮圖導航，可點選或拖曳移動畫面"
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              panFromNavigator(event);
+            }}
+            onPointerMove={(event) => {
+              if (event.buttons === 1) panFromNavigator(event);
+            }}
+          >
+            <canvas ref={minimapRef} width={width} height={height} />
+            <span
+              className="zoom-minimap-viewport"
+              style={{
+                left: `${viewport.x}%`,
+                top: `${viewport.y}%`,
+                width: `${viewport.width}%`,
+                height: `${viewport.height}%`,
+              }}
+            />
           </div>
         </div>
       </div>
