@@ -463,6 +463,7 @@ export default function AnnotationEditor({
     [outlineColor, setOutlineColor] = useState("#ffffff"),
     [outlineWidth, setOutlineWidth] = useState(1),
     [nextNumber, setNextNumber] = useState(1),
+    [numberSize, setNumberSize] = useState(40),
     [mosaicBlock, setMosaicBlock] = useState(18),
     [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
@@ -655,6 +656,17 @@ export default function AnnotationEditor({
       event.preventDefault();
       event.stopPropagation();
       const step = event.deltaY < 0 ? 1 : -1;
+      const target = objects.find((object) => object.id === hoveredId);
+      if (!target) return;
+      if (target.type === "number") {
+        setNumberSize(
+          Math.max(16, Math.min(240, target.size + step * 2)),
+        );
+      } else if (target.type !== "text" && target.type !== "mosaic") {
+        setStrokeWidth(
+          Math.max(1, Math.min(32, target.strokeWidth + step)),
+        );
+      }
       setUndo((stack) => [...stack, objects]);
       setRedo([]);
       setObjects((items) =>
@@ -735,7 +747,7 @@ export default function AnnotationEditor({
         x: p.x,
         y: p.y,
         number: nextNumber,
-        size: 40,
+        size: numberSize,
         color,
         strokeWidth,
       };
@@ -851,6 +863,9 @@ export default function AnnotationEditor({
     svg.setPointerCapture(e.pointerId);
     setSelected(o.id);
     setTool(o.type === "mosaic" ? "mosaic" : o.type);
+    setColor(o.color);
+    setStrokeWidth(o.strokeWidth);
+    if (o.type === "number") setNumberSize(o.size);
     if (
       o.type === "rectangle" ||
       o.type === "ellipse" ||
