@@ -47,6 +47,7 @@ type HistoryEntry = {
   canvasWidth: number;
   canvasHeight: number;
   selection?: RectInfo;
+  thumbnailDataUrl?: string;
 };
 
 const RELEASES_URL = "https://github.com/harmonica80/captureflow/releases";
@@ -56,7 +57,7 @@ const copy = {
     title: "擷圖與標註工作區", theme: "色系主題", light: "淺色", dark: "深色",
     create: "建立擷圖", createHelp: "桌面模式只負責選取範圍；完成後會自動回到右側編輯器。",
     select: "框選螢幕範圍", selecting: "框選中…", openProject: "開啟 JSON 專案",
-    history: "歷史擷圖記錄", monitors: "擷取整個螢幕", screen: "螢幕", current: "目前圖片",
+    history: "歷史擷圖記錄", captureItem: "擷圖", monitors: "擷取整個螢幕", screen: "螢幕", current: "目前圖片",
     preferences: "偏好設定", shortcut: "快捷鍵", globalShortcut: "全域框選快捷鍵", apply: "套用", reset: "預設",
     historyCount: "保留記錄數量", clearHistory: "清除歷史擷圖記錄", saveImage: "圖片儲存",
     saveFolder: "預設儲存圖檔資料夾", chooseFolder: "選擇資料夾…", startup: "系統啟動時自動執行",
@@ -69,7 +70,7 @@ const copy = {
     title: "Screenshot & Annotation Workspace", theme: "Theme", light: "Light", dark: "Dark",
     create: "New Capture", createHelp: "Select on the desktop, then continue editing in this window.",
     select: "Select Screen Area", selecting: "Selecting…", openProject: "Open JSON Project",
-    history: "Capture History", monitors: "Capture Full Display", screen: "Display", current: "Current Image",
+    history: "Capture History", captureItem: "Capture", monitors: "Capture Full Display", screen: "Display", current: "Current Image",
     preferences: "Preferences", shortcut: "Shortcut", globalShortcut: "Global capture shortcut", apply: "Apply", reset: "Default",
     historyCount: "History limit", clearHistory: "Clear capture history", saveImage: "Image Storage",
     saveFolder: "Default image folder", chooseFolder: "Choose folder…", startup: "Run when Windows starts",
@@ -386,19 +387,29 @@ export default function App() {
               {history.length === 0 ? (
                 <p>尚無擷圖歷史。</p>
               ) : (
-                history.map((item, index) => (
-                  <button
+                history.map((item, index) => {
+                  const capturedAt = new Date(item.createdAtUnixMs);
+                  return <button
                     key={item.projectPath}
+                    className="history-entry"
                     onClick={() => loadProjectPath(item.projectPath)}
-                    title={new Date(item.createdAtUnixMs).toLocaleString()}
+                    title={capturedAt.toLocaleString(language)}
                   >
-                    <span>擷圖 {index + 1}</span>
-                    <small>
-                      {item.canvasWidth} × {item.canvasHeight} ·{" "}
-                      {new Date(item.createdAtUnixMs).toLocaleString()}
-                    </small>
-                  </button>
-                ))
+                    {item.thumbnailDataUrl ? (
+                      <img src={item.thumbnailDataUrl} alt="" loading="lazy" />
+                    ) : (
+                      <span className="history-thumbnail-placeholder" aria-hidden="true">▧</span>
+                    )}
+                    <span className="history-entry-details">
+                      <strong>{t.captureItem} {index + 1}</strong>
+                      <small>{item.canvasWidth} × {item.canvasHeight}</small>
+                      <time dateTime={capturedAt.toISOString()}>
+                        {capturedAt.toLocaleDateString(language)}<br />
+                        {capturedAt.toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      </time>
+                    </span>
+                  </button>;
+                })
               )}
             </div>}
           </section>

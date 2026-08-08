@@ -480,6 +480,7 @@ export default function AnnotationEditor({
   const [stageScale, setStageScale] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
+  const [minimapOpen, setMinimapOpen] = useState(true);
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 100, height: 100 });
   const selected = objects.find((o) => o.id === selectedId),
     hover = objects.find((o) => o.id === (selectedId || hoveredId));
@@ -1695,15 +1696,15 @@ export default function AnnotationEditor({
           )}
         </div>
         </div>
-        <div className="zoom-dock">
+        <div className={`zoom-dock${minimapOpen ? "" : " collapsed"}`}>
           {zoomMenuOpen && <div className="zoom-menu"><button onClick={() => setZoom((value) => Math.min(300, value + 10))} disabled={zoom >= 300}>放大 <kbd>Ctrl +</kbd></button><button onClick={() => setZoom((value) => Math.max(25, value - 10))}>縮小 <kbd>Ctrl −</kbd></button><button onClick={() => setZoom(100)}>縮放至 100%</button><button onClick={() => setZoom(100)}>縮放至適合大小</button></div>}
           <div className="zoom-control" role="group" aria-label="圖片縮放控制">
             <button onClick={() => setZoom((value) => Math.max(25, value - 10))} title="縮小圖片">−</button>
             <button className="zoom-value" onClick={() => setZoomMenuOpen((open) => !open)} aria-expanded={zoomMenuOpen}><output aria-live="polite">{zoom}%</output></button>
             <button onClick={() => setZoom((value) => Math.min(300, value + 10))} disabled={zoom >= 300} title={zoom >= 300 ? "已達最大縮放比例" : "放大圖片"}>＋</button>
-            <button onClick={() => setZoomMenuOpen((open) => !open)} title="顯示縮放選單">«</button>
+            <button onClick={() => setMinimapOpen((open) => !open)} title={minimapOpen ? "收合縮圖導航" : "展開縮圖導航"} aria-expanded={minimapOpen}>{minimapOpen ? "«" : "»"}</button>
           </div>
-          <div
+          {minimapOpen && <div
             className="zoom-minimap"
             role="application"
             aria-label="圖片縮圖導航，可點選或拖曳移動畫面"
@@ -1725,7 +1726,7 @@ export default function AnnotationEditor({
                 height: `${viewport.height}%`,
               }}
             />
-          </div>
+          </div>}
         </div>
       </div>
     </section>

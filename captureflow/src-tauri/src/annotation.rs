@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
-use std::{fs, time::SystemTime};
+use std::{fs, io::Cursor, path::Path, time::SystemTime};
 use tauri::{AppHandle, Manager};
 
 pub fn save_edited_image(
@@ -88,6 +88,17 @@ pub struct HistoryEntry {
     pub canvas_width: u32,
     pub canvas_height: u32,
     pub selection: Option<serde_json::Value>,
+    pub thumbnail_data_url: Option<String>,
+}
+
+fn history_thumbnail(path: &Path) -> Option<String> {
+    let image = image::open(path).ok()?.thumbnail(240, 140);
+    let mut png = Cursor::new(Vec::new());
+    image.write_to(&mut png, image::ImageFormat::Png).ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        BASE64.encode(png.into_inner())
+    ))
 }
 
 pub fn save_project(
@@ -214,6 +225,7 @@ pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
             canvas_width: project.canvas_width,
             canvas_height: project.canvas_height,
             selection,
+            thumbnail_data_url: history_thumbnail(&source),
         });
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_unix_ms));

@@ -36,6 +36,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .history-card button { display: grid; gap: 3px; padding: 9px 10px; border: 1px solid #365847; border-radius: 9px; color: #eef7f2; background: #10231c; text-align: left; cursor: pointer; }
 .history-card button:hover { border-color: #74e7ad; background: #193126; }
 .history-card small { color: #c3d2ca; }
+.history-card .history-entry { grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 9px; }
+.history-entry img, .history-thumbnail-placeholder { display: block; width: 88px; height: 62px; border: 1px solid #527563; border-radius: 6px; background: #26332e; object-fit: cover; }
+.history-thumbnail-placeholder { display: grid; place-items: center; color: #d8e7df; font-size: 28px; }
+.history-entry-details { display: grid; min-width: 0; gap: 2px; }
+.history-entry-details strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-entry-details time { color: #d8e7df; font-size: 12px; line-height: 1.35; }
 .monitor-card small { color: #b9c9c1; }
 .current-image-card { display: grid; width: 100%; gap: 5px; color: #eef7f2; text-align: left; cursor: pointer; }
 .current-image-card:hover { border-color: #74e7ad; background: #142a21; }
@@ -130,6 +136,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .control-point { fill: #fff; stroke: #1769aa; stroke-width: 2; cursor: grab; }
 .inline-text-input { position: absolute; z-index: 3; min-width: 1ch; max-width: calc(100% - 8px); padding: 0; border: 0; outline: 0; color: inherit; background: transparent; line-height: 1.15; }
 .zoom-dock { position: absolute; z-index: 8; right: 10px; bottom: 10px; display: grid; justify-items: end; width: 210px; gap: 7px; }
+.zoom-dock.collapsed { width: max-content; }
 .zoom-control { display: flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid #68766f; border-radius: 10px; color: #171717; background: #eef1f2; box-shadow: 0 5px 18px #0005; }
 .zoom-control button { min-width: 34px; height: 32px; border: 1px solid transparent; border-radius: 7px; color: #171717; background: transparent; cursor: pointer; }
 .zoom-control button:hover { border-color: #68766f; background: #e3e9e6; }
@@ -155,6 +162,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .theme-light .capture-button.primary:hover { background: #075f3b; }
 .theme-light .history-toggle span, .theme-light .history-card h3, .theme-light .settings-card h3, .theme-light .current-image-card span { color: #086b42; }
 .theme-light .history-card small, .theme-light .settings-card label { color: #3c5147; }
+.theme-light .history-entry-details time { color: #35483f; }
+.theme-light .history-thumbnail-placeholder { color: #35483f; background: #e3e9e6; }
 .theme-light .settings-card input, .theme-light .settings-card select { border-color: #82998d; color: #17251e; background: #fff; }
 .close-dialog-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: #0009; }
 .close-dialog { width: min(460px, 100%); padding: 24px; border: 1px solid #6f8d7e; border-radius: 16px; color: #f4f7f5; background: #10231c; box-shadow: 0 20px 60px #0008; }
