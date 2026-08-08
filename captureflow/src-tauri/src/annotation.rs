@@ -218,6 +218,7 @@ pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|value| value.get("selection").cloned());
+        let thumbnail_data_url = history_thumbnail(source);
         entries.push(HistoryEntry {
             project_path: path.to_string_lossy().into_owned(),
             image_path: project.source_image,
@@ -225,7 +226,7 @@ pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
             canvas_width: project.canvas_width,
             canvas_height: project.canvas_height,
             selection,
-            thumbnail_data_url: history_thumbnail(&source),
+            thumbnail_data_url,
         });
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_unix_ms));
