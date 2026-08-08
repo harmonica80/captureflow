@@ -53,15 +53,15 @@ const RELEASES_URL = "https://github.com/harmonica80/captureflow/releases";
 type Language = "zh-TW" | "en";
 const copy = {
   "zh-TW": {
-    title: "截圖與標註工作區", theme: "色系主題", light: "淺色", dark: "深色",
-    create: "建立截圖", createHelp: "桌面模式只負責選取範圍；完成後會自動回到右側編輯器。",
+    title: "擷圖與標註工作區", theme: "色系主題", light: "淺色", dark: "深色",
+    create: "建立擷圖", createHelp: "桌面模式只負責選取範圍；完成後會自動回到右側編輯器。",
     select: "框選螢幕範圍", selecting: "框選中…", openProject: "開啟 JSON 專案",
-    history: "歷史截圖記錄", monitors: "擷取整個螢幕", screen: "螢幕", current: "目前圖片",
+    history: "歷史擷圖記錄", monitors: "擷取整個螢幕", screen: "螢幕", current: "目前圖片",
     preferences: "偏好設定", shortcut: "快捷鍵", globalShortcut: "全域框選快捷鍵", apply: "套用", reset: "預設",
-    historyCount: "保留記錄數量", clearHistory: "清除歷史截圖記錄", saveImage: "圖片儲存",
+    historyCount: "保留記錄數量", clearHistory: "清除歷史擷圖記錄", saveImage: "圖片儲存",
     saveFolder: "預設儲存圖檔資料夾", chooseFolder: "選擇資料夾…", startup: "系統啟動時自動執行",
     language: "介面語言", traditionalChinese: "繁體中文", english: "英文", savePreferences: "儲存偏好設定",
-    emptyTitle: "尚未載入截圖", emptyHelp: "可從左側框選螢幕、選擇螢幕，或直接開啟以前的 JSON 專案。",
+    emptyTitle: "尚未載入擷圖", emptyHelp: "可從左側框選螢幕、選擇螢幕，或直接開啟以前的 JSON 專案。",
     start: "開始框選", closeTitle: "關閉 CaptureFlow", closeQuestion: "您要最小化視窗還是結束應用程式？",
     minimize: "最小化視窗", quit: "結束應用程式", cancel: "取消",
   },
@@ -116,7 +116,7 @@ export default function App() {
     setSelection(captured);
     setObjects([]);
     setEditorKey((k) => k + 1);
-    setMessage(`截圖已載入編輯器，並加入最近 ${settings?.historyLimit ?? 20} 筆歷史`);
+    setMessage(`擷圖已載入編輯器，並加入最近 ${settings?.historyLimit ?? 20} 筆歷史`);
     setError("");
     setTimeout(() => void refreshHistory(), 900);
   }
@@ -323,7 +323,7 @@ export default function App() {
     try {
       await invoke("clear_capture_history");
       setHistory([]);
-      setMessage("歷史截圖記錄已清除；手動另存的專案不受影響");
+      setMessage("歷史擷圖記錄已清除；手動另存的專案不受影響");
       setError("");
     } catch (reason) { setError(String(reason)); }
   }
@@ -384,7 +384,7 @@ export default function App() {
             {historyOpen && <div className="history-card">
               <h3>最近 {settings?.historyLimit ?? 20} 筆</h3>
               {history.length === 0 ? (
-                <p>尚無截圖歷史。</p>
+                <p>尚無擷圖歷史。</p>
               ) : (
                 history.map((item, index) => (
                   <button
@@ -392,7 +392,7 @@ export default function App() {
                     onClick={() => loadProjectPath(item.projectPath)}
                     title={new Date(item.createdAtUnixMs).toLocaleString()}
                   >
-                    <span>截圖 {index + 1}</span>
+                    <span>擷圖 {index + 1}</span>
                     <small>
                       {item.canvasWidth} × {item.canvasHeight} ·{" "}
                       {new Date(item.createdAtUnixMs).toLocaleString()}

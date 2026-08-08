@@ -1622,11 +1622,11 @@ export default function AnnotationEditor({
           )}
         </div>
         <div className="zoom-dock">
-          {zoomMenuOpen && <div className="zoom-menu"><button onClick={() => setZoom((value) => Math.min(300, value + 10))}>放大 <kbd>Ctrl +</kbd></button><button onClick={() => setZoom((value) => Math.max(25, value - 10))}>縮小 <kbd>Ctrl −</kbd></button><button onClick={() => setZoom(100)}>縮放至 100%</button><button onClick={() => setZoom(100)}>縮放至適合大小</button></div>}
+          {zoomMenuOpen && <div className="zoom-menu"><button onClick={() => setZoom((value) => Math.min(100, value + 10))} disabled={zoom >= 100}>放大 <kbd>Ctrl +</kbd></button><button onClick={() => setZoom((value) => Math.max(25, value - 10))}>縮小 <kbd>Ctrl −</kbd></button><button onClick={() => setZoom(100)}>縮放至 100%</button><button onClick={() => setZoom(100)}>縮放至適合大小</button></div>}
           <div className="zoom-control" role="group" aria-label="圖片縮放控制">
             <button onClick={() => setZoom((value) => Math.max(25, value - 10))} title="縮小圖片">−</button>
             <button className="zoom-value" onClick={() => setZoomMenuOpen((open) => !open)} aria-expanded={zoomMenuOpen}><output aria-live="polite">{zoom}%</output></button>
-            <button onClick={() => setZoom((value) => Math.min(300, value + 10))} title="放大圖片">＋</button>
+            <button onClick={() => setZoom((value) => Math.min(100, value + 10))} disabled={zoom >= 100} title={zoom >= 100 ? "已達適合視窗的最大比例" : "放大圖片"}>＋</button>
             <button onClick={() => setZoomMenuOpen((open) => !open)} title="顯示縮放選單">«</button>
           </div>
         </div>

@@ -152,7 +152,7 @@ pub fn update_preferences(
     language: String,
 ) -> Result<SettingsView, String> {
     if !(1..=100).contains(&history_limit) {
-        return Err("歷史截圖記錄數量必須介於 1 到 100。".into());
+        return Err("歷史擷圖記錄數量必須介於 1 到 100。".into());
     }
     if !default_save_directory.is_empty() && !std::path::Path::new(&default_save_directory).is_dir()
     {

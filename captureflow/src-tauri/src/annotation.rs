@@ -10,7 +10,7 @@ pub fn save_edited_image(
     height: u32,
     rgba: Vec<u8>,
 ) -> Result<(), String> {
-    let source = fs::canonicalize(image_path).map_err(|error| format!("無法讀取截圖：{error}"))?;
+    let source = fs::canonicalize(image_path).map_err(|error| format!("無法讀取擷圖：{error}"))?;
     let app_data = fs::canonicalize(
         app.path()
             .app_data_dir()
@@ -18,7 +18,7 @@ pub fn save_edited_image(
     )
     .map_err(|error| format!("無法讀取應用程式資料目錄：{error}"))?;
     if !source.starts_with(&app_data) {
-        return Err("只能更新 CaptureFlow 產生的截圖。".into());
+        return Err("只能更新 CaptureFlow 產生的擷圖。".into());
     }
     if width == 0 || height == 0 || rgba.len() != width as usize * height as usize * 4 {
         return Err("編輯圖片尺寸或像素資料不正確。".into());
@@ -109,7 +109,7 @@ pub fn save_project(
     )
     .map_err(|error| format!("無法讀取應用程式資料目錄：{error}"))?;
     if !source.starts_with(&app_data) {
-        return Err("只能為 CaptureFlow 產生的截圖建立專案。".into());
+        return Err("只能為 CaptureFlow 產生的擷圖建立專案。".into());
     }
     let objects = objects.as_array().ok_or("標註物件必須是陣列。")?;
     if objects.len() > 10_000 {
@@ -159,7 +159,7 @@ pub fn auto_save_project(
     let stem = source
         .file_stem()
         .and_then(|value| value.to_str())
-        .ok_or("截圖檔名不正確")?;
+        .ok_or("擷圖檔名不正確")?;
     let history_dir = app
         .path()
         .app_data_dir()
@@ -321,7 +321,7 @@ pub fn load_latest_project(app: &AppHandle, image_path: &str) -> Result<Annotati
     )
     .map_err(|error| format!("無法讀取應用程式資料目錄：{error}"))?;
     if !source.starts_with(&app_data) {
-        return Err("只能開啟 CaptureFlow 產生的截圖專案。".into());
+        return Err("只能開啟 CaptureFlow 產生的擷圖專案。".into());
     }
 
     let project_dir = app_data.join("projects");
@@ -350,5 +350,5 @@ pub fn load_latest_project(app: &AppHandle, image_path: &str) -> Result<Annotati
         .into_iter()
         .max_by_key(|(created_at, _)| *created_at)
         .map(|(_, project)| project)
-        .ok_or_else(|| "找不到目前截圖的可編輯專案。請先儲存一次。".to_string())
+        .ok_or_else(|| "找不到目前擷圖的可編輯專案。請先儲存一次。".to_string())
 }

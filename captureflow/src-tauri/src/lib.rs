@@ -58,7 +58,7 @@ fn export_selection(
     use std::path::Path;
 
     let source =
-        std::fs::canonicalize(&image_path).map_err(|error| format!("無法讀取截圖來源：{error}"))?;
+        std::fs::canonicalize(&image_path).map_err(|error| format!("無法讀取擷圖來源：{error}"))?;
     let app_data = std::fs::canonicalize(
         app.path()
             .app_data_dir()
@@ -66,7 +66,7 @@ fn export_selection(
     )
     .map_err(|error| format!("無法讀取應用程式資料目錄：{error}"))?;
     if !source.starts_with(&app_data) {
-        return Err("只能匯出 CaptureFlow 產生的截圖。".into());
+        return Err("只能匯出 CaptureFlow 產生的擷圖。".into());
     }
     let format = match Path::new(&destination)
         .extension()
@@ -80,7 +80,7 @@ fn export_selection(
         _ => return Err("請使用 .png、.jpg、.jpeg 或 .webp 副檔名。".into()),
     };
     image::open(source)
-        .map_err(|error| format!("無法解碼截圖：{error}"))?
+        .map_err(|error| format!("無法解碼擷圖：{error}"))?
         .save_with_format(destination, format)
         .map_err(|error| format!("無法儲存圖片：{error}"))
 }
@@ -267,7 +267,7 @@ pub fn run() {
             settings::initialize(app.handle())?;
             let shortcut = settings::view(app.handle())?.capture_shortcut;
             tauri::tray::TrayIconBuilder::new()
-                .tooltip(format!("CaptureFlow · {shortcut} 開始截圖"))
+                .tooltip(format!("CaptureFlow · {shortcut} 開始擷圖"))
                 .icon(
                     app.default_window_icon()
                         .ok_or("missing application icon")?

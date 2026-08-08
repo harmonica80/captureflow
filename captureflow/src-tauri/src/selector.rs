@@ -163,7 +163,7 @@ pub async fn select_area(app: AppHandle) -> Result<Option<SelectionSnapshot>, St
             image::ColorType::Rgba8,
             image::ImageFormat::Png,
         )
-        .map_err(|error| format!("無法儲存長截圖：{error}"))?;
+        .map_err(|error| format!("無法儲存長擷圖：{error}"))?;
         snapshot.height = long.height;
     }
     save_last_selection(&app, global_selection, selected.corner_radius)?;
@@ -1069,7 +1069,7 @@ mod platform {
     };
 
     fn begin_long_capture(state: &mut SelectorState) -> Result<(), String> {
-        let selection = state.selection.ok_or("請先框選長截圖範圍")?;
+        let selection = state.selection.ok_or("請先框選長擷圖範圍")?;
         let first = crop_rgba(&state.bgra, state.width, state.height, selection)?;
         state.long_capture = Some(LongCaptureState {
             previous_bgra: first.clone(),
@@ -1085,7 +1085,7 @@ mod platform {
         hwnd: HWND,
         delta: i32,
     ) -> Result<(), String> {
-        let selection = state.selection.ok_or("長截圖範圍已遺失")?;
+        let selection = state.selection.ok_or("長擷圖範圍已遺失")?;
         let screen_x = state.origin_x + selection.x + selection.width / 2;
         let screen_y = state.origin_y + selection.y + selection.height / 2;
         EnableWindow(hwnd, false);
@@ -1095,14 +1095,14 @@ mod platform {
         });
         EnableWindow(hwnd, true);
         if target.is_invalid() {
-            return Err("找不到長截圖範圍下方的可捲動視窗".into());
+            return Err("找不到長擷圖範圍下方的可捲動視窗".into());
         }
         let wheel_wparam = WPARAM(((delta as i16 as u16 as usize) << 16) as usize);
         let wheel_lparam = LPARAM(
             (((screen_y as i16 as u16 as u32) << 16) | screen_x as i16 as u16 as u32) as isize,
         );
         PostMessageW(Some(target), WM_MOUSEWHEEL, wheel_wparam, wheel_lparam)
-            .map_err(|error| format!("無法轉送長截圖捲動事件：{error}"))?;
+            .map_err(|error| format!("無法轉送長擷圖捲動事件：{error}"))?;
         std::thread::sleep(std::time::Duration::from_millis(500));
         let frame = crate::capture::capture_frame();
         let frame = frame?;
@@ -1121,7 +1121,7 @@ mod platform {
         for pixel in current.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
-        let long = state.long_capture.as_mut().ok_or("長截圖尚未啟動")?;
+        let long = state.long_capture.as_mut().ok_or("長擷圖尚未啟動")?;
         if frame_difference(&long.previous_bgra, &current) < 1.2 {
             return Ok(());
         }
@@ -2166,7 +2166,7 @@ mod platform {
 
                         let dimensions = if let Some(long) = state.long_capture.as_ref() {
                             format!(
-                                "長截圖：請向下滾動 · {} × {} px",
+                                "長擷圖：請向下滾動 · {} × {} px",
                                 long.width,
                                 long.stitched_bgra.len() / (long.width * 4)
                             )
