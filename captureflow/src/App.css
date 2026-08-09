@@ -42,6 +42,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .history-entry-details { display: grid; min-width: 0; gap: 2px; }
 .history-entry-details strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-entry-details time { color: #d8e7df; font-size: 12px; line-height: 1.35; }
+.history-entry-row { position: relative; }
+.history-card .history-entry-row .history-entry { width: 100%; padding-right: 42px; }
+.history-card .history-entry-row .history-delete { position: absolute; top: 7px; right: 7px; display: flex; width: 30px; height: 30px; align-items: center; justify-content: center; padding: 0; border-color: #b84b59; border-radius: 7px; color: #fff; background: #8b1e2d; font-size: 22px; line-height: 1; text-align: center; }
+.history-card .history-entry-row .history-delete:hover { border-color: #e38a96; color: #fff; background: #681420; }
 .monitor-card small { color: #b9c9c1; }
 .current-image-card { display: grid; width: 100%; gap: 5px; color: #eef7f2; text-align: left; cursor: pointer; }
 .current-image-card:hover { border-color: #74e7ad; background: #142a21; }

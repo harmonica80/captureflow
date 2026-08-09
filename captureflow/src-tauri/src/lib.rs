@@ -130,6 +130,10 @@ fn clear_capture_history(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn delete_capture_history_entry(app: tauri::AppHandle, project_path: String) -> Result<(), String> {
+    annotation::delete_history_entry(&app, &project_path)
+}
+#[tauri::command]
 fn reveal_file(image_path: String) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -299,6 +303,7 @@ pub fn run() {
             update_capture_shortcut,
             update_preferences,
             clear_capture_history,
+            delete_capture_history_entry,
             reveal_file,
             record_client_error,
             save_annotation_project,

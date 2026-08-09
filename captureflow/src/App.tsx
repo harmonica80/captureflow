@@ -64,7 +64,7 @@ const copy = {
     language: "介面語言", traditionalChinese: "繁體中文", english: "英文", savePreferences: "儲存偏好設定",
     emptyTitle: "尚未載入擷圖", emptyHelp: "可從左側框選螢幕、選擇螢幕，或直接開啟以前的 JSON 專案。",
     start: "開始框選", closeTitle: "關閉 CaptureFlow", closeQuestion: "您要最小化視窗還是結束應用程式？",
-    minimize: "最小化視窗", quit: "結束應用程式", cancel: "取消",
+    minimize: "最小化視窗", quit: "結束應用程式", cancel: "取消", deleteHistory: "刪除這筆記錄", deleteHistoryConfirm: "確定要刪除這筆擷圖歷史及其自動儲存檔案嗎？",
   },
   en: {
     title: "Screenshot & Annotation Workspace", theme: "Theme", light: "Light", dark: "Dark",
@@ -77,7 +77,7 @@ const copy = {
     language: "Language", traditionalChinese: "Traditional Chinese", english: "English", savePreferences: "Save Preferences",
     emptyTitle: "No screenshot loaded", emptyHelp: "Select an area, capture a display, or open an existing JSON project.",
     start: "Start Capture", closeTitle: "Close CaptureFlow", closeQuestion: "Would you like to minimize the window or quit the application?",
-    minimize: "Minimize Window", quit: "Quit Application", cancel: "Cancel",
+    minimize: "Minimize Window", quit: "Quit Application", cancel: "Cancel", deleteHistory: "Delete this entry", deleteHistoryConfirm: "Delete this capture history entry and its auto-saved files?",
   },
 } as const;
 
@@ -338,6 +338,22 @@ export default function App() {
       setError("");
     } catch (reason) { setError(String(reason)); }
   }
+  async function deleteHistoryEntry(item: HistoryEntry) {
+    if (!window.confirm(t.deleteHistoryConfirm)) return;
+    try {
+      await invoke("delete_capture_history_entry", { projectPath: item.projectPath });
+      setHistory((entries) => entries.filter((entry) => entry.projectPath !== item.projectPath));
+      if (selection?.metadataPath === item.projectPath) {
+        setSelection(null);
+        setObjects([]);
+        setEditorKey((key) => key + 1);
+      }
+      setMessage(t.deleteHistory);
+      setError("");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
   async function revealCurrentImage() {
     if (!selection) return;
     try { await invoke("reveal_file", { imagePath: selection.imagePath }); }
@@ -399,26 +415,36 @@ export default function App() {
               ) : (
                 history.map((item, index) => {
                   const capturedAt = new Date(item.createdAtUnixMs);
-                  return <button
-                    key={item.projectPath}
-                    className="history-entry"
-                    onClick={() => loadProjectPath(item.projectPath)}
-                    title={capturedAt.toLocaleString(language)}
-                  >
-                    {item.thumbnailDataUrl ? (
-                      <img src={item.thumbnailDataUrl} alt="" loading="lazy" />
-                    ) : (
-                      <span className="history-thumbnail-placeholder" aria-hidden="true">▧</span>
-                    )}
-                    <span className="history-entry-details">
-                      <strong>{t.captureItem} {index + 1}</strong>
-                      <small>{item.canvasWidth} × {item.canvasHeight}</small>
-                      <time dateTime={capturedAt.toISOString()}>
-                        {capturedAt.toLocaleDateString(language)}<br />
-                        {capturedAt.toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                      </time>
-                    </span>
-                  </button>;
+                  return <div className="history-entry-row" key={item.projectPath}>
+                    <button
+                      className="history-entry"
+                      onClick={() => loadProjectPath(item.projectPath)}
+                      title={capturedAt.toLocaleString(language)}
+                    >
+                      {item.thumbnailDataUrl ? (
+                        <img src={item.thumbnailDataUrl} alt="" loading="lazy" />
+                      ) : (
+                        <span className="history-thumbnail-placeholder" aria-hidden="true">▧</span>
+                      )}
+                      <span className="history-entry-details">
+                        <strong>{t.captureItem} {index + 1}</strong>
+                        <small>{item.canvasWidth} × {item.canvasHeight}</small>
+                        <time dateTime={capturedAt.toISOString()}>
+                          {capturedAt.toLocaleDateString(language)}<br />
+                          {capturedAt.toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                        </time>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="history-delete"
+                      onClick={() => void deleteHistoryEntry(item)}
+                      title={t.deleteHistory}
+                      aria-label={`${t.deleteHistory}：${t.captureItem} ${index + 1}`}
+                    >
+                      ×
+                    </button>
+                  </div>;
                 })
               )}
             </div>}

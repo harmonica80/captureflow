@@ -1049,8 +1049,8 @@ mod platform {
             UI::{
                 HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
                 Input::KeyboardAndMouse::{
-                    EnableWindow, GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_BACK,
-                    VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
+                    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_BACK, VK_CONTROL,
+                    VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
                 },
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
@@ -1088,19 +1088,12 @@ mod platform {
         let selection = state.selection.ok_or("長擷圖範圍已遺失")?;
         let screen_x = state.origin_x + selection.x + selection.width / 2;
         let screen_y = state.origin_y + selection.y + selection.height / 2;
-        // Disable hit testing only long enough to locate the window below the
-        // selector. Re-enable immediately so subsequent wheel events continue
-        // reaching this overlay without hiding or flashing it.
-        EnableWindow(hwnd, false);
-        let target = WindowFromPoint(POINT {
-            x: screen_x,
-            y: screen_y,
-        });
-        EnableWindow(hwnd, true);
+        // Resolve a window strictly below the selector in Z-order. Never post
+        // the wheel back to this overlay: doing so would create an endless
+        // self-forwarding queue and prevent Escape/cancel from being handled.
+        let target = input_window_below_selector(hwnd, screen_x, screen_y)
+            .ok_or("找不到長擷圖範圍下方的可捲動視窗")?;
         let result = (|| {
-            if target.is_invalid() {
-                return Err("找不到長擷圖範圍下方的可捲動視窗".into());
-            }
             let wheel_wparam = WPARAM(((delta as i16 as u16 as usize) << 16) as usize);
             let wheel_lparam = LPARAM(
                 (((screen_y as i16 as u16 as u32) << 16) | screen_x as i16 as u16 as u32) as isize,
@@ -4135,6 +4128,27 @@ mod platform {
         (rect.x, rect.y, rect.width, rect.height, radius)
     }
 
+    unsafe fn input_window_below_selector(
+        selector_hwnd: HWND,
+        screen_x: i32,
+        screen_y: i32,
+    ) -> Option<HWND> {
+        let mut current = GetWindow(selector_hwnd, GW_HWNDFIRST).ok()?;
+        while !current.is_invalid() {
+            if current != selector_hwnd
+                && IsWindowVisible(current).as_bool()
+                && !IsIconic(current).as_bool()
+                && window_contains_point(current, screen_x, screen_y)
+            {
+                return Some(deepest_child_at(current, screen_x, screen_y, 0).unwrap_or(current));
+            }
+            current = match GetWindow(current, GW_HWNDNEXT) {
+                Ok(next) => next,
+                Err(_) => break,
+            };
+        }
+        None
+    }
     unsafe fn detect_window_at(
         selector_hwnd: HWND,
         local_point: (i32, i32),

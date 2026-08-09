@@ -234,6 +234,41 @@ pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
     Ok(entries)
 }
 
+pub fn delete_history_entry(app: &AppHandle, project_path: &str) -> Result<(), String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    let history_dir = app_data.join("history");
+    let history_root =
+        fs::canonicalize(&history_dir).map_err(|error| format!("無法讀取歷史資料夾：{error}"))?;
+    let project = fs::canonicalize(project_path)
+        .map_err(|error| format!("找不到要刪除的歷史記錄：{error}"))?;
+    if !project.starts_with(&history_root)
+        || project.extension().and_then(|value| value.to_str()) != Some("json")
+    {
+        return Err("只能刪除 CaptureFlow 歷史資料夾中的 JSON 記錄。".into());
+    }
+
+    let source_image = fs::read(&project)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<AnnotationProject>(&bytes).ok())
+        .map(|entry| std::path::PathBuf::from(entry.source_image));
+    fs::remove_file(&project).map_err(|error| format!("無法刪除歷史記錄：{error}"))?;
+
+    // Only remove associated captures owned by this application's data folder.
+    if let Some(image) = source_image {
+        if let (Ok(app_root), Ok(image_path)) =
+            (fs::canonicalize(&app_data), fs::canonicalize(&image))
+        {
+            if image_path.starts_with(app_root) {
+                let _ = fs::remove_file(image_path.with_extension("json"));
+                let _ = fs::remove_file(image_path);
+            }
+        }
+    }
+    Ok(())
+}
 pub fn prune_history(app: &AppHandle, keep: usize) -> Result<(), String> {
     let history_dir = app
         .path()
