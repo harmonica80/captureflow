@@ -1054,16 +1054,17 @@ mod platform {
                     VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
                 },
                 WindowsAndMessaging::{
-                    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-                    GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadCursorW,
-                    PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetCursorPos,
-                    SetForegroundWindow, SetTimer, SetWindowDisplayAffinity, ShowWindow,
-                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
-                    IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS,
-                    IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_HIDE, SW_SHOW, WDA_EXCLUDEFROMCAPTURE,
-                    WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
-                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
-                    WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnableWindow,
+                    GetMessageW, GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer,
+                    LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassW, SetCursor,
+                    SetCursorPos, SetForegroundWindow, SetTimer, SetWindowDisplayAffinity,
+                    ShowWindow, TranslateMessage, WindowFromPoint, CS_HREDRAW, CS_VREDRAW,
+                    GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS, IDC_IBEAM,
+                    IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_SHOW,
+                    WDA_EXCLUDEFROMCAPTURE, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY,
+                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+                    WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
+                    WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -1089,13 +1090,19 @@ mod platform {
         let selection = state.selection.ok_or("長擷圖範圍已遺失")?;
         let screen_x = state.origin_x + selection.x + selection.width / 2;
         let screen_y = state.origin_y + selection.y + selection.height / 2;
+        // Keep the frozen selector visible so the selected area never flashes.
+        // Disabling it makes WindowFromPoint resolve the underlying application,
+        // which can then receive SendInput while the selector remains on screen.
+        EnableWindow(hwnd, false);
+        let target = WindowFromPoint(POINT {
+            x: screen_x,
+            y: screen_y,
+        });
         let result = (|| {
-            // The selector is a topmost full-desktop window. Hide it while the
-            // synthetic wheel event is delivered so the underlying app can
-            // receive the input normally. The caller restores the window below
-            // even when scrolling or capturing fails.
-            ShowWindow(hwnd, SW_HIDE);
-            std::thread::sleep(std::time::Duration::from_millis(80));
+            if target.is_invalid() {
+                return Err("找不到長擷圖範圍下方的可捲動視窗".into());
+            }
+            let _ = SetForegroundWindow(target);
             SetCursorPos(screen_x, screen_y)
                 .map_err(|error| format!("無法定位長擷圖游標：{error}"))?;
             let input = INPUT {
@@ -1117,7 +1124,7 @@ mod platform {
             std::thread::sleep(std::time::Duration::from_millis(500));
             crate::capture::capture_frame()
         })();
-        ShowWindow(hwnd, SW_SHOW);
+        EnableWindow(hwnd, true);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(Some(hwnd));
         let frame = result?;
