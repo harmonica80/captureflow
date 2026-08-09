@@ -223,6 +223,11 @@ export default function App() {
     setBusy(kind === "monitor" ? (deviceName ?? "monitor") : kind);
     setError("");
     try {
+      const appWindow = getCurrentWindow();
+      if (kind === "area") {
+        await appWindow.minimize();
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
       const result =
         kind === "area"
           ? await invoke<SelectionSnapshot | null>("select_screen_area")
@@ -231,6 +236,11 @@ export default function App() {
     } catch (reason) {
       setError(String(reason));
     } finally {
+      if (kind === "area") {
+        const appWindow = getCurrentWindow();
+        await appWindow.unminimize();
+        await appWindow.setFocus();
+      }
       setBusy("");
     }
   }

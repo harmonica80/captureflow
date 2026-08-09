@@ -1049,22 +1049,20 @@ mod platform {
             UI::{
                 HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
                 Input::KeyboardAndMouse::{
-                    EnableWindow, GetKeyState, ReleaseCapture, SendInput, SetCapture, SetFocus,
-                    INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT, VK_BACK,
+                    EnableWindow, GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_BACK,
                     VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
                 },
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
                     GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadCursorW,
-                    PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetCursorPos,
-                    SetForegroundWindow, SetTimer, SetWindowDisplayAffinity, ShowWindow,
-                    TranslateMessage, WindowFromPoint, CS_HREDRAW, CS_VREDRAW, GW_CHILD,
-                    GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL,
-                    IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_SHOW,
-                    WDA_EXCLUDEFROMCAPTURE, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY,
-                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-                    WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
-                    WS_EX_TOPMOST, WS_POPUP,
+                    PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetForegroundWindow,
+                    SetTimer, SetWindowDisplayAffinity, ShowWindow, TranslateMessage,
+                    WindowFromPoint, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
+                    IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS,
+                    IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_SHOW, WDA_EXCLUDEFROMCAPTURE,
+                    WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
+                    WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -1090,41 +1088,28 @@ mod platform {
         let selection = state.selection.ok_or("長擷圖範圍已遺失")?;
         let screen_x = state.origin_x + selection.x + selection.width / 2;
         let screen_y = state.origin_y + selection.y + selection.height / 2;
-        // Keep the frozen selector visible so the selected area never flashes.
-        // Disabling it makes WindowFromPoint resolve the underlying application,
-        // which can then receive SendInput while the selector remains on screen.
+        // Disable hit testing only long enough to locate the window below the
+        // selector. Re-enable immediately so subsequent wheel events continue
+        // reaching this overlay without hiding or flashing it.
         EnableWindow(hwnd, false);
         let target = WindowFromPoint(POINT {
             x: screen_x,
             y: screen_y,
         });
+        EnableWindow(hwnd, true);
         let result = (|| {
             if target.is_invalid() {
                 return Err("找不到長擷圖範圍下方的可捲動視窗".into());
             }
-            let _ = SetForegroundWindow(target);
-            SetCursorPos(screen_x, screen_y)
-                .map_err(|error| format!("無法定位長擷圖游標：{error}"))?;
-            let input = INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dx: 0,
-                        dy: 0,
-                        mouseData: delta as u32,
-                        dwFlags: MOUSEEVENTF_WHEEL,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            };
-            if SendInput(&[input], size_of::<INPUT>() as i32) != 1 {
-                return Err("無法送出長擷圖捲動事件".into());
-            }
+            let wheel_wparam = WPARAM(((delta as i16 as u16 as usize) << 16) as usize);
+            let wheel_lparam = LPARAM(
+                (((screen_y as i16 as u16 as u32) << 16) | screen_x as i16 as u16 as u32) as isize,
+            );
+            PostMessageW(Some(target), WM_MOUSEWHEEL, wheel_wparam, wheel_lparam)
+                .map_err(|error| format!("無法轉送長擷圖滾輪事件：{error}"))?;
             std::thread::sleep(std::time::Duration::from_millis(500));
             crate::capture::capture_frame()
         })();
-        EnableWindow(hwnd, true);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(Some(hwnd));
         let frame = result?;
