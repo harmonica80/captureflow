@@ -43,9 +43,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .history-entry-details strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-entry-details time { color: #d8e7df; font-size: 12px; line-height: 1.35; }
 .history-entry-row { position: relative; }
-.history-card .history-entry-row .history-entry { width: 100%; padding-right: 42px; }
-.history-card .history-entry-row .history-delete { position: absolute; top: 7px; right: 7px; display: flex; width: 30px; height: 30px; align-items: center; justify-content: center; padding: 0; border-color: #b84b59; border-radius: 7px; color: #fff; background: #8b1e2d; font-size: 22px; line-height: 1; text-align: center; }
-.history-card .history-entry-row .history-delete:hover { border-color: #e38a96; color: #fff; background: #681420; }
+.history-card .history-entry-row .history-entry { width: 100%; padding-right: 32px; }
+.history-card .history-entry-row .history-delete { position: absolute; top: 6px; right: 6px; display: flex; width: 22px; height: 22px; align-items: center; justify-content: center; padding: 0; border: 0; color: #eef7f2; background: transparent; font-size: 13px; font-weight: 700; line-height: 1; text-align: center; }
+.history-card .history-entry-row .history-delete:hover { border: 0; color: #fff; background: transparent; }
+.theme-light .history-card .history-entry-row .history-delete, .theme-light .history-card .history-entry-row .history-delete:hover { color: #17251e; background: transparent; }
 .monitor-card small { color: #b9c9c1; }
 .current-image-card { display: grid; width: 100%; gap: 5px; color: #eef7f2; text-align: left; cursor: pointer; }
 .current-image-card:hover { border-color: #74e7ad; background: #142a21; }

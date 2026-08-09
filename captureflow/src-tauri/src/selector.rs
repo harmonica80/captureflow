@@ -1049,20 +1049,21 @@ mod platform {
             UI::{
                 HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
                 Input::KeyboardAndMouse::{
-                    GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_BACK, VK_CONTROL,
-                    VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
+                    GetKeyState, ReleaseCapture, SendInput, SetCapture, SetFocus, INPUT, INPUT_0,
+                    INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT, VK_BACK, VK_CONTROL, VK_DOWN,
+                    VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
                 },
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
                     GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadCursorW,
                     PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetForegroundWindow,
-                    SetTimer, SetWindowDisplayAffinity, ShowWindow, TranslateMessage,
-                    WindowFromPoint, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
-                    IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS,
-                    IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_SHOW, WDA_EXCLUDEFROMCAPTURE,
-                    WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
-                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
-                    WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    SetTimer, SetWindowDisplayAffinity, ShowWindow, TranslateMessage, CS_HREDRAW,
+                    CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS,
+                    IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
+                    MSG, SW_SHOW, WDA_EXCLUDEFROMCAPTURE, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE,
+                    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW,
+                    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -1088,21 +1089,35 @@ mod platform {
         let selection = state.selection.ok_or("長擷圖範圍已遺失")?;
         let screen_x = state.origin_x + selection.x + selection.width / 2;
         let screen_y = state.origin_y + selection.y + selection.height / 2;
-        // Resolve a window strictly below the selector in Z-order. Never post
-        // the wheel back to this overlay: doing so would create an endless
-        // self-forwarding queue and prevent Escape/cancel from being handled.
-        let target = input_window_below_selector(hwnd, screen_x, screen_y)
-            .ok_or("找不到長擷圖範圍下方的可捲動視窗")?;
         let result = (|| {
-            let wheel_wparam = WPARAM(((delta as i16 as u16 as usize) << 16) as usize);
-            let wheel_lparam = LPARAM(
-                (((screen_y as i16 as u16 as u32) << 16) | screen_x as i16 as u16 as u32) as isize,
-            );
-            PostMessageW(Some(target), WM_MOUSEWHEEL, wheel_wparam, wheel_lparam)
-                .map_err(|error| format!("無法轉送長擷圖滾輪事件：{error}"))?;
+            // The selector is a topmost full-desktop window. Hide it while the
+            // synthetic wheel event is delivered so the underlying app can
+            // receive the input normally. The caller restores the window below
+            // even when scrolling or capturing fails.
+            ShowWindow(hwnd, SW_HIDE);
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            SetCursorPos(screen_x, screen_y)
+                .map_err(|error| format!("無法定位長擷圖游標：{error}"))?;
+            let input = INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: 0,
+                        dy: 0,
+                        mouseData: delta as u32,
+                        dwFlags: MOUSEEVENTF_WHEEL,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            };
+            if SendInput(&[input], size_of::<INPUT>() as i32) != 1 {
+                return Err("無法送出長擷圖捲動事件".into());
+            }
             std::thread::sleep(std::time::Duration::from_millis(500));
             crate::capture::capture_frame()
         })();
+        ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(Some(hwnd));
         let frame = result?;
@@ -4128,27 +4143,6 @@ mod platform {
         (rect.x, rect.y, rect.width, rect.height, radius)
     }
 
-    unsafe fn input_window_below_selector(
-        selector_hwnd: HWND,
-        screen_x: i32,
-        screen_y: i32,
-    ) -> Option<HWND> {
-        let mut current = GetWindow(selector_hwnd, GW_HWNDFIRST).ok()?;
-        while !current.is_invalid() {
-            if current != selector_hwnd
-                && IsWindowVisible(current).as_bool()
-                && !IsIconic(current).as_bool()
-                && window_contains_point(current, screen_x, screen_y)
-            {
-                return Some(deepest_child_at(current, screen_x, screen_y, 0).unwrap_or(current));
-            }
-            current = match GetWindow(current, GW_HWNDNEXT) {
-                Ok(next) => next,
-                Err(_) => break,
-            };
-        }
-        None
-    }
     unsafe fn detect_window_at(
         selector_hwnd: HWND,
         local_point: (i32, i32),

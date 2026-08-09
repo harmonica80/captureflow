@@ -442,7 +442,7 @@ export default function App() {
                       title={t.deleteHistory}
                       aria-label={`${t.deleteHistory}：${t.captureItem} ${index + 1}`}
                     >
-                      ×
+                      X
                     </button>
                   </div>;
                 })
