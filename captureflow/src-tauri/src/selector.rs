@@ -1136,20 +1136,36 @@ mod platform {
         for pixel in current.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
-        let long = state.long_capture.as_mut().ok_or("長擷圖尚未啟動")?;
-        if frame_difference(&long.previous_bgra, &current) < 1.2 {
-            return Ok(());
+        {
+            let long = state.long_capture.as_mut().ok_or("長擷圖尚未啟動")?;
+            if frame_difference(&long.previous_bgra, &current) < 1.2 {
+                return Ok(());
+            }
+            let overlap = best_vertical_overlap(
+                &long.previous_bgra,
+                &current,
+                long.width,
+                long.viewport_height,
+            );
+            let row = long.width * 4;
+            long.stitched_bgra
+                .extend_from_slice(&current[overlap * row..]);
+            long.previous_bgra.clone_from(&current);
         }
-        let overlap = best_vertical_overlap(
-            &long.previous_bgra,
-            &current,
-            long.width,
-            long.viewport_height,
-        );
-        let row = long.width * 4;
-        long.stitched_bgra
-            .extend_from_slice(&current[overlap * row..]);
-        long.previous_bgra = current;
+
+        // Keep the selected viewport synchronized with the page that just
+        // scrolled. The stitched preview continues to accumulate separately,
+        // while the main selection shows the current underlying content.
+        let source_stride = selection.width as usize * 4;
+        for row_index in 0..selection.height as usize {
+            let source_start = row_index * source_stride;
+            let destination_start = ((selection.y as usize + row_index) * state.width as usize
+                + selection.x as usize)
+                * 4;
+            state.bgra[destination_start..destination_start + source_stride]
+                .copy_from_slice(&current[source_start..source_start + source_stride]);
+        }
+        state.composite_rect = None;
         Ok(())
     }
 
