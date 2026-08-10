@@ -28,7 +28,7 @@ CaptureFlow 是一套 Windows 免安裝螢幕擷圖與物件式標註工具，�
 
 ## 下載
 
-[下載最新版 CaptureFlow-portable.exe](https://github.com/harmonica80/captureflow/releases/latest/download/CaptureFlow-portable.exe)
+[下載 CaptureFlow 0.5.3 免安裝版](https://github.com/harmonica80/captureflow/releases/download/v0.5.3/CaptureFlow-portable.exe)
 
 Windows 可能會對未簽章的免安裝程式顯示 SmartScreen 提醒。請確認下載來源及發布頁提供的 SHA-256 後再執行。
 
