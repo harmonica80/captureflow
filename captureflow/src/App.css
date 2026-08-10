@@ -139,6 +139,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .annotation-hover { fill: none; stroke: #1769aa; stroke-width: 2; stroke-dasharray: 7 4; pointer-events: none; }
 .selected-box { filter: drop-shadow(0 0 2px #fff); }
 .control-point { fill: #fff; stroke: #1769aa; stroke-width: 2; cursor: grab; }
+.text-resize-nw, .text-resize-se { cursor: nwse-resize; }
+.text-resize-ne, .text-resize-sw { cursor: nesw-resize; }
 .inline-text-input { position: absolute; z-index: 3; min-width: 1ch; max-width: calc(100% - 8px); padding: 0; border: 0; outline: 0; color: inherit; background: transparent; line-height: 1.15; }
 .zoom-dock { position: absolute; z-index: 8; right: 10px; bottom: 10px; display: grid; justify-items: end; width: 210px; gap: 7px; }
 .zoom-dock.collapsed { width: max-content; }

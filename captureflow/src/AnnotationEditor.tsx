@@ -457,6 +457,8 @@ export default function AnnotationEditor({
       x: number;
       y: number;
       value: string;
+      original: TextObject | null;
+      historyCaptured: boolean;
     } | null>(null);
   const [fontFamily, setFontFamily] = useState(fonts[0]),
     [fontSize, setFontSize] = useState(32),
@@ -600,9 +602,20 @@ export default function AnnotationEditor({
     const resizeText = (event: WheelEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      setFontSize((size) =>
-        Math.max(8, Math.min(240, size + (event.deltaY < 0 ? 2 : -2))),
-      );
+      setFontSize((size) => {
+        const next = Math.max(
+          8,
+          Math.min(240, size + (event.deltaY < 0 ? 2 : -2)),
+        );
+        setObjects((items) =>
+          items.map((object) =>
+            object.id === editing.id && object.type === "text"
+              ? { ...object, fontSize: next }
+              : object,
+          ),
+        );
+        return next;
+      });
     };
     input?.addEventListener("wheel", resizeText, { passive: false });
     return () => {
@@ -790,7 +803,14 @@ export default function AnnotationEditor({
     setSelected(null);
     if (tool === "text") {
       const id = crypto.randomUUID();
-      setEditing({ id, x: p.x, y: p.y, value: "" });
+      setEditing({
+        id,
+        x: p.x,
+        y: p.y,
+        value: "",
+        original: null,
+        historyCaptured: false,
+      });
       return;
     }
     if (tool === "number") {
@@ -907,6 +927,26 @@ export default function AnnotationEditor({
       setObjects((a) => a.filter((x) => x.id !== o.id));
       return;
     }
+    if (tool === "text" && o.type === "text") {
+      setSelected(o.id);
+      setColor(o.color);
+      setStrokeWidth(o.strokeWidth);
+      setFontFamily(o.fontFamily);
+      setFontSize(o.fontSize);
+      setBold(o.bold);
+      setItalic(o.italic);
+      setOutlineColor(o.outlineColor);
+      setOutlineWidth(o.outlineWidth);
+      setEditing({
+        id: o.id,
+        x: o.x,
+        y: o.y - o.fontSize,
+        value: o.text,
+        original: { ...o },
+        historyCaptured: false,
+      });
+      return;
+    }
     const svg = e.currentTarget.ownerSVGElement;
     if (!svg) return;
     const r = svg.getBoundingClientRect(),
@@ -953,29 +993,125 @@ export default function AnnotationEditor({
     window.addEventListener("pointermove", moveCurve);
     window.addEventListener("pointerup", done);
   }
+  function textObjectFromEditing(value: string): TextObject {
+    if (!editing) throw new Error("Text editing is not active");
+    return {
+      id: editing.id,
+      type: "text",
+      x: editing.x,
+      y: editing.y + fontSize,
+      text: value,
+      color,
+      strokeWidth,
+      fontSize,
+      fontFamily,
+      bold,
+      italic,
+      outlineColor,
+      outlineWidth,
+    };
+  }
+  function changeEditingText(value: string) {
+    if (!editing) return;
+    if (!editing.historyCaptured) {
+      setUndo((stack) => [...stack, objects]);
+      setRedo([]);
+    }
+    const existing = objects.some((object) => object.id === editing.id);
+    if (existing) {
+      setObjects((items) =>
+        items.map((object) =>
+          object.id === editing.id && object.type === "text"
+            ? { ...object, text: value }
+            : object,
+        ),
+      );
+    } else if (value.length > 0) {
+      setObjects((items) => [...items, textObjectFromEditing(value)]);
+      setSelected(editing.id);
+    }
+    setEditing({ ...editing, value, historyCaptured: true });
+  }
   function commitText() {
     if (!editing) return;
-    if (editing.value.trim()) {
-      snapshot();
-      const o: TextObject = {
-        id: editing.id,
-        type: "text",
-        x: editing.x,
-        y: editing.y + fontSize,
-        text: editing.value,
-        color,
-        strokeWidth,
-        fontSize,
-        fontFamily,
-        bold,
-        italic,
-        outlineColor,
-        outlineWidth,
-      };
-      setObjects((a) => [...a, o]);
-      setSelected(o.id);
+    const exists = objects.some((object) => object.id === editing.id);
+    if (!editing.value.trim()) {
+      if (exists) setObjects((items) => items.filter((object) => object.id !== editing.id));
+      setSelected(null);
+    } else if (!exists) {
+      setUndo((stack) => [...stack, objects]);
+      setRedo([]);
+      setObjects((items) => [...items, textObjectFromEditing(editing.value)]);
+      setSelected(editing.id);
     }
     setEditing(null);
+  }
+  function cancelText() {
+    if (!editing) return;
+    if (editing.original) {
+      const original = editing.original;
+      setObjects((items) =>
+        items.map((object) => (object.id === original.id ? original : object)),
+      );
+      setSelected(original.id);
+    } else {
+      setObjects((items) => items.filter((object) => object.id !== editing.id));
+      setSelected(null);
+    }
+    setEditing(null);
+  }
+  function textResizeDown(
+    event: React.PointerEvent<SVGCircleElement>,
+    object: TextObject,
+    corner: "nw" | "ne" | "sw" | "se",
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const svg = event.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const frame = visualBounds ?? bounds(object);
+    const center = {
+      x: frame.x + frame.width / 2,
+      y: frame.y + frame.height / 2,
+    };
+    const cornerPoint = {
+      x: corner.endsWith("e") ? frame.x + frame.width : frame.x,
+      y: corner.startsWith("s") ? frame.y + frame.height : frame.y,
+    };
+    const initialDistance = Math.max(
+      1,
+      Math.hypot(cornerPoint.x - center.x, cornerPoint.y - center.y),
+    );
+    snapshot();
+    const resize = (pointer: PointerEvent) => {
+      const rect = svg.getBoundingClientRect();
+      const point = {
+        x: ((pointer.clientX - rect.left) * width) / rect.width,
+        y: ((pointer.clientY - rect.top) * height) / rect.height,
+      };
+      const scale = Math.hypot(point.x - center.x, point.y - center.y) / initialDistance;
+      const nextSize = Math.max(8, Math.min(240, object.fontSize * scale));
+      const appliedScale = nextSize / object.fontSize;
+      setFontSize(Math.round(nextSize));
+      setObjects((items) =>
+        items.map((item) =>
+          item.id === object.id && item.type === "text"
+            ? {
+                ...item,
+                x: center.x + (object.x - center.x) * appliedScale,
+                y: center.y + (object.y - center.y) * appliedScale,
+                fontSize: nextSize,
+              }
+            : item,
+        ),
+      );
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", resize);
+      window.removeEventListener("pointerup", finish);
+    };
+    window.addEventListener("pointermove", resize);
+    window.addEventListener("pointerup", finish);
   }
   function updateSelected(patch: Record<string, unknown>) {
     if (!selectedId) return;
@@ -1530,6 +1666,7 @@ export default function AnnotationEditor({
                       <text
                         x={o.x}
                         y={o.y}
+                        opacity={editing?.id === o.id ? 0 : 1}
                         transform={
                           o.italic
                             ? `translate(${o.x} ${o.y}) skewX(-12) translate(${-o.x} ${-o.y})`
@@ -1599,6 +1736,32 @@ export default function AnnotationEditor({
                       onPointerDown={(e) => curveDown(e, hover)}
                     />
                   )}
+                  {hover.type === "text" && selectedId === hover.id && !editing &&
+                    (() => {
+                      const frame = visualBounds ?? bounds(hover);
+                      const points = [
+                        { corner: "nw" as const, x: frame.x, y: frame.y },
+                        { corner: "ne" as const, x: frame.x + frame.width, y: frame.y },
+                        { corner: "sw" as const, x: frame.x, y: frame.y + frame.height },
+                        {
+                          corner: "se" as const,
+                          x: frame.x + frame.width,
+                          y: frame.y + frame.height,
+                        },
+                      ];
+                      return points.map((point) => (
+                        <circle
+                          key={point.corner}
+                          className={`control-point text-resize-${point.corner}`}
+                          cx={point.x}
+                          cy={point.y}
+                          r="6"
+                          onPointerDown={(event) =>
+                            textResizeDown(event, hover, point.corner)
+                          }
+                        />
+                      ));
+                    })()}
                 </g>
               )}
               {draft && tool === "rectangle" && (
@@ -1683,13 +1846,11 @@ export default function AnnotationEditor({
                 caretColor: color,
               }}
               value={editing.value}
-              onChange={(e) =>
-                setEditing({ ...editing, value: e.target.value })
-              }
+              onChange={(e) => changeEditingText(e.target.value)}
               onBlur={commitText}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitText();
-                if (e.key === "Escape") setEditing(null);
+                if (e.key === "Escape") cancelText();
               }}
               aria-label="輸入標註文字"
             />
