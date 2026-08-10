@@ -729,7 +729,11 @@ export default function AnnotationEditor({
         setNumberSize(
           Math.max(16, Math.min(240, target.size + step * 2)),
         );
-      } else if (target.type !== "text" && target.type !== "mosaic") {
+      } else if (target.type === "text") {
+        setFontSize(
+          Math.max(8, Math.min(240, Math.round(target.fontSize + step * 2))),
+        );
+      } else if (target.type !== "mosaic") {
         setStrokeWidth(
           Math.max(1, Math.min(32, target.strokeWidth + step)),
         );
@@ -1090,9 +1094,11 @@ export default function AnnotationEditor({
         y: ((pointer.clientY - rect.top) * height) / rect.height,
       };
       const scale = Math.hypot(point.x - center.x, point.y - center.y) / initialDistance;
-      const nextSize = Math.max(8, Math.min(240, object.fontSize * scale));
+      const nextSize = Math.round(
+        Math.max(8, Math.min(240, object.fontSize * scale)),
+      );
       const appliedScale = nextSize / object.fontSize;
-      setFontSize(Math.round(nextSize));
+      setFontSize(nextSize);
       setObjects((items) =>
         items.map((item) =>
           item.id === object.id && item.type === "text"
@@ -1113,7 +1119,55 @@ export default function AnnotationEditor({
     window.addEventListener("pointermove", resize);
     window.addEventListener("pointerup", finish);
   }
-  function updateSelected(patch: Record<string, unknown>) {
+  function textMoveFrameDown(
+    event: React.PointerEvent<SVGRectElement>,
+    object: TextObject,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const svg = event.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const origin = {
+      x: ((event.clientX - rect.left) * width) / rect.width,
+      y: ((event.clientY - rect.top) * height) / rect.height,
+    };
+    const originalEditing =
+      editing?.id === object.id ? { x: editing.x, y: editing.y } : null;
+    snapshot();
+    const moveFrame = (pointer: PointerEvent) => {
+      const point = {
+        x: ((pointer.clientX - rect.left) * width) / rect.width,
+        y: ((pointer.clientY - rect.top) * height) / rect.height,
+      };
+      const dx = point.x - origin.x;
+      const dy = point.y - origin.y;
+      setObjects((items) =>
+        items.map((item) =>
+          item.id === object.id && item.type === "text"
+            ? { ...item, x: object.x + dx, y: object.y + dy }
+            : item,
+        ),
+      );
+      if (originalEditing) {
+        setEditing((current) =>
+          current?.id === object.id
+            ? {
+                ...current,
+                x: originalEditing.x + dx,
+                y: originalEditing.y + dy,
+              }
+            : current,
+        );
+      }
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", moveFrame);
+      window.removeEventListener("pointerup", finish);
+    };
+    window.addEventListener("pointermove", moveFrame);
+    window.addEventListener("pointerup", finish);
+  }  function updateSelected(patch: Record<string, unknown>) {
     if (!selectedId) return;
     snapshot();
     setObjects((a) =>
@@ -1727,6 +1781,22 @@ export default function AnnotationEditor({
                       />
                     );
                   })()}
+                  {hover.type === "text" && selectedId === hover.id &&
+                    (() => {
+                      const frame = visualBounds ?? bounds(hover);
+                      return (
+                        <rect
+                          className="text-move-frame"
+                          x={frame.x - 4}
+                          y={frame.y - 4}
+                          width={frame.width + 8}
+                          height={frame.height + 8}
+                          onPointerDown={(event) =>
+                            textMoveFrameDown(event, hover)
+                          }
+                        />
+                      );
+                    })()}
                   {hover.type === "arrow" && (
                     <circle
                       className="control-point curve-point"

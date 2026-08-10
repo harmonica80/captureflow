@@ -137,6 +137,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .annotation-stage svg > * { vector-effect: non-scaling-stroke; }
 .annotation-stage svg polygon, .annotation-stage svg polyline, .annotation-stage svg text, .annotation-stage svg g, .annotation-stage svg > rect:not(.selected-box), .annotation-stage svg ellipse { cursor: move; }
 .annotation-hover { fill: none; stroke: #1769aa; stroke-width: 2; stroke-dasharray: 7 4; pointer-events: none; }
+.text-move-frame { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: move; }
 .selected-box { filter: drop-shadow(0 0 2px #fff); }
 .control-point { fill: #fff; stroke: #1769aa; stroke-width: 2; cursor: grab; }
 .text-resize-nw, .text-resize-se { cursor: nwse-resize; }
