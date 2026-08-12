@@ -25,6 +25,10 @@ type SelectionSnapshot = {
   height: number;
   cornerRadius?: number;
 };
+type CropSnapshot = {
+  selection: SelectionSnapshot;
+  objects: AnnotationObject[];
+};
 type SettingsView = {
   captureShortcut: string;
   defaultShortcut: string;
@@ -88,6 +92,7 @@ export default function App() {
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null),
     [objects, setObjects] = useState<AnnotationObject[]>([]),
     [editorKey, setEditorKey] = useState(0);
+  const [cropHistory, setCropHistory] = useState<CropSnapshot[]>([]);
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]),
     [history, setHistory] = useState<HistoryEntry[]>([]),
     [historyOpen, setHistoryOpen] = useState(false);
@@ -116,6 +121,7 @@ export default function App() {
   function receiveSelection(captured: SelectionSnapshot) {
     setSelection(captured);
     setObjects([]);
+    setCropHistory([]);
     setEditorKey((k) => k + 1);
     setMessage(`擷圖已載入編輯器，並加入最近 ${settings?.historyLimit ?? 20} 筆歷史`);
     setError("");
@@ -197,6 +203,7 @@ export default function App() {
         height: p.canvasHeight,
       });
       setObjects(p.objects);
+      setCropHistory([]);
       setEditorKey((k) => k + 1);
       setMessage("已開啟包含來源圖片的可編輯專案");
       setHistoryOpen(false);
@@ -534,7 +541,29 @@ export default function App() {
               onCopy={copySelection}
               onSave={saveSelection}
               onSticker={openSticker}
+              canUndoCrop={cropHistory.length > 0}
+              onUndoCrop={() => {
+                setCropHistory((history) => {
+                  const previous = history[history.length - 1];
+                  if (!previous) return history;
+                  setSelection(previous.selection);
+                  setObjects(previous.objects);
+                  setEditorKey((key) => key + 1);
+                  setMessage(
+                    language === "en"
+                      ? "Crop undone. The previous image size and annotations were restored."
+                      : "已復原裁切，並還原先前的圖片尺寸與標註。",
+                  );
+                  return history.slice(0, -1);
+                });
+              }}
               onCrop={(result) => {
+                if (selection) {
+                  setCropHistory((history) => [
+                    ...history,
+                    { selection, objects: [...objects] },
+                  ]);
+                }
                 setSelection((current) =>
                   current
                     ? {
@@ -554,7 +583,10 @@ export default function App() {
                 setObjects(result.objects);
                 setEditorKey((key) => key + 1);
               }}
-              onClose={() => setSelection(null)}
+              onClose={() => {
+                setSelection(null);
+                setCropHistory([]);
+              }}
               onStatus={(status, isError) => {
                 isError
                   ? (setError(status), setMessage(""))

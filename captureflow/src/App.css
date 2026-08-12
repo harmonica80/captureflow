@@ -145,6 +145,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .inline-text-input { position: absolute; z-index: 3; min-width: 1ch; max-width: calc(100% - 8px); padding: 0; border: 0; outline: 0; color: inherit; background: transparent; line-height: 1.15; }
 .crop-frame { fill: none; stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 1px #000); }
 .crop-grid line { stroke: #fff; stroke-width: 1; opacity: .72; }
+.crop-overlay > path, .crop-frame, .crop-grid { pointer-events: none; }
+.crop-handle { fill: #fff; stroke: #1769aa; stroke-width: 2; }
+.crop-handle-nw, .crop-handle-se { cursor: nwse-resize; }
+.crop-handle-ne, .crop-handle-sw { cursor: nesw-resize; }
+.crop-handle-n, .crop-handle-s { cursor: ns-resize; }
+.crop-handle-e, .crop-handle-w { cursor: ew-resize; }
 .crop-property-bar { justify-content: flex-end; }
 .crop-property-bar span { margin-right: auto; }
 .zoom-dock { position: absolute; z-index: 8; right: 10px; bottom: 10px; display: grid; justify-items: end; width: 210px; gap: 7px; }

@@ -17,6 +17,7 @@ type Tool =
   | "eraser"
   | "crop";
 type LineStyle = "solid" | "dashed" | "dotted" | "dashDot";
+type CropHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 type Base = {
   id: string;
   color: string;
@@ -91,6 +92,8 @@ type Props = {
     height: number;
     objects: Annotation[];
   }) => void;
+  canUndoCrop: boolean;
+  onUndoCrop: () => void;
   onClose: () => void;
   onStatus: (message: string, isError?: boolean) => void;
   language?: "zh-TW" | "en";
@@ -437,6 +440,8 @@ export default function AnnotationEditor({
   onSave,
   onSticker,
   onCrop,
+  canUndoCrop,
+  onUndoCrop,
   onClose,
   onStatus,
   language = "zh-TW",
@@ -802,7 +807,10 @@ export default function AnnotationEditor({
   }, [hoveredId, objects]);
   function undo() {
     const p = undoStack[undoStack.length - 1];
-    if (!p) return;
+    if (!p) {
+      if (canUndoCrop) onUndoCrop();
+      return;
+    }
     setRedo((s) => [...s, objects]);
     setObjects(p);
     setUndo((s) => s.slice(0, -1));
@@ -821,6 +829,50 @@ export default function AnnotationEditor({
     snapshot();
     setObjects((a) => a.filter((o) => o.id !== selectedId));
     setSelected(null);
+  }
+  function cropHandleDown(
+    event: React.PointerEvent<SVGRectElement>,
+    handle: CropHandle,
+  ) {
+    if (!cropRect) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const svg = event.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const original = cropRect;
+    const resize = (pointer: PointerEvent) => {
+      const frame = svg.getBoundingClientRect();
+      const point = {
+        x: Math.max(
+          0,
+          Math.min(width, ((pointer.clientX - frame.left) * width) / frame.width),
+        ),
+        y: Math.max(
+          0,
+          Math.min(height, ((pointer.clientY - frame.top) * height) / frame.height),
+        ),
+      };
+      let left = original.x;
+      let top = original.y;
+      let right = original.x + original.width;
+      let bottom = original.y + original.height;
+      if (handle.includes("w")) left = Math.min(point.x, right - 8);
+      if (handle.includes("e")) right = Math.max(point.x, left + 8);
+      if (handle.includes("n")) top = Math.min(point.y, bottom - 8);
+      if (handle.includes("s")) bottom = Math.max(point.y, top + 8);
+      setCropRect({
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+      });
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", resize);
+      window.removeEventListener("pointerup", finish);
+    };
+    window.addEventListener("pointermove", resize);
+    window.addEventListener("pointerup", finish);
   }
   async function applyCrop() {
     if (!cropRect || !canvasRef.current) return;
@@ -1488,7 +1540,7 @@ export default function AnnotationEditor({
             aria-label="復原"
             title="復原"
             onClick={undo}
-            disabled={!undoStack.length}
+            disabled={!undoStack.length && !canUndoCrop}
           >
             ↶
           </button>
@@ -2006,7 +2058,7 @@ export default function AnnotationEditor({
                 />
               )}
               {cropPreview && (
-                <g className="crop-overlay" pointerEvents="none">
+                <g className="crop-overlay">
                   <path
                     d={`M 0 0 H ${width} V ${height} H 0 Z M ${cropPreview.x} ${cropPreview.y} H ${cropPreview.x + cropPreview.width} V ${cropPreview.y + cropPreview.height} H ${cropPreview.x} Z`}
                     fill="rgba(0, 0, 0, 0.55)"
@@ -2035,6 +2087,28 @@ export default function AnnotationEditor({
                       />
                     </g>
                   ))}
+                  {cropRect &&
+                    !draft &&
+                    ([
+                      ["nw", cropRect.x, cropRect.y],
+                      ["n", cropRect.x + cropRect.width / 2, cropRect.y],
+                      ["ne", cropRect.x + cropRect.width, cropRect.y],
+                      ["e", cropRect.x + cropRect.width, cropRect.y + cropRect.height / 2],
+                      ["se", cropRect.x + cropRect.width, cropRect.y + cropRect.height],
+                      ["s", cropRect.x + cropRect.width / 2, cropRect.y + cropRect.height],
+                      ["sw", cropRect.x, cropRect.y + cropRect.height],
+                      ["w", cropRect.x, cropRect.y + cropRect.height / 2],
+                    ] as [CropHandle, number, number][]).map(([handle, x, y]) => (
+                      <rect
+                        key={handle}
+                        className={`crop-handle crop-handle-${handle}`}
+                        x={x - 5}
+                        y={y - 5}
+                        width={10}
+                        height={10}
+                        onPointerDown={(event) => cropHandleDown(event, handle)}
+                      />
+                    ))}
                 </g>
               )}
             </svg>
