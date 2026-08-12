@@ -143,6 +143,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .text-resize-nw, .text-resize-se { cursor: nwse-resize; }
 .text-resize-ne, .text-resize-sw { cursor: nesw-resize; }
 .inline-text-input { position: absolute; z-index: 3; min-width: 1ch; max-width: calc(100% - 8px); padding: 0; border: 0; outline: 0; color: inherit; background: transparent; line-height: 1.15; }
+.crop-frame { fill: none; stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 1px #000); }
+.crop-grid line { stroke: #fff; stroke-width: 1; opacity: .72; }
+.crop-property-bar { justify-content: flex-end; }
+.crop-property-bar span { margin-right: auto; }
 .zoom-dock { position: absolute; z-index: 8; right: 10px; bottom: 10px; display: grid; justify-items: end; width: 210px; gap: 7px; }
 .zoom-dock.collapsed { width: max-content; }
 .zoom-control { display: flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid #68766f; border-radius: 10px; color: #171717; background: #eef1f2; box-shadow: 0 5px 18px #0005; }

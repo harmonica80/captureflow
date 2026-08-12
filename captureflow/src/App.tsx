@@ -534,6 +534,26 @@ export default function App() {
               onCopy={copySelection}
               onSave={saveSelection}
               onSticker={openSticker}
+              onCrop={(result) => {
+                setSelection((current) =>
+                  current
+                    ? {
+                        ...current,
+                        imagePath: result.imagePath,
+                        width: result.width,
+                        height: result.height,
+                        selection: {
+                          x: current.selection.x + result.x,
+                          y: current.selection.y + result.y,
+                          width: result.width,
+                          height: result.height,
+                        },
+                      }
+                    : current,
+                );
+                setObjects(result.objects);
+                setEditorKey((key) => key + 1);
+              }}
               onClose={() => setSelection(null)}
               onStatus={(status, isError) => {
                 isError

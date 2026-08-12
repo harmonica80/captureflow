@@ -14,7 +14,8 @@ type Tool =
   | "text"
   | "number"
   | "mosaic"
-  | "eraser";
+  | "eraser"
+  | "crop";
 type LineStyle = "solid" | "dashed" | "dotted" | "dashDot";
 type Base = {
   id: string;
@@ -82,6 +83,14 @@ type Props = {
   onCopy: (imagePath?: string) => Promise<void>;
   onSave: (imagePath?: string) => Promise<void>;
   onSticker: (imagePath?: string) => Promise<void>;
+  onCrop: (result: {
+    imagePath: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    objects: Annotation[];
+  }) => void;
   onClose: () => void;
   onStatus: (message: string, isError?: boolean) => void;
   language?: "zh-TW" | "en";
@@ -120,6 +129,7 @@ const labelsZh: Record<Tool, string> = {
   number: "序號",
   mosaic: "馬賽克",
   eraser: "橡皮擦",
+  crop: "裁切",
 };
 const labelsEn: Record<Tool, string> = {
   rectangle: "Rectangle",
@@ -131,6 +141,7 @@ const labelsEn: Record<Tool, string> = {
   number: "Number",
   mosaic: "Mosaic",
   eraser: "Eraser",
+  crop: "Crop",
 };
 
 function Icon({ type }: { type: Tool }) {
@@ -186,6 +197,9 @@ function Icon({ type }: { type: Tool }) {
           <path d="M5 16l8-10 6 5-7 9H8z" {...p} />
           <path d="M10 20h9" {...p} />
         </>
+      )}
+      {type === "crop" && (
+        <path d="M7 3v14a2 2 0 0 0 2 2h12M3 7h12a2 2 0 0 1 2 2v12" {...p} />
       )}
     </svg>
   );
@@ -422,6 +436,7 @@ export default function AnnotationEditor({
   onCopy,
   onSave,
   onSticker,
+  onCrop,
   onClose,
   onStatus,
   language = "zh-TW",
@@ -480,6 +495,12 @@ export default function AnnotationEditor({
       height: number;
     } | null>(null);
   const [stageScale, setStageScale] = useState(1);
+  const [cropRect, setCropRect] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const [zoom, setZoom] = useState(100);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const [minimapOpen, setMinimapOpen] = useState(true);
@@ -495,6 +516,7 @@ export default function AnnotationEditor({
           height: Math.abs(current.y - start.y),
         }
       : null;
+  const cropPreview = tool === "crop" ? (draft ?? cropRect) : null;
   const editingWidth = useMemo(() => {
     if (!editing) return 2;
     const canvas = document.createElement("canvas"),
@@ -800,6 +822,53 @@ export default function AnnotationEditor({
     setObjects((a) => a.filter((o) => o.id !== selectedId));
     setSelected(null);
   }
+  async function applyCrop() {
+    if (!cropRect || !canvasRef.current) return;
+    const x = Math.max(0, Math.floor(cropRect.x));
+    const y = Math.max(0, Math.floor(cropRect.y));
+    const cropWidth = Math.min(width - x, Math.max(1, Math.round(cropRect.width)));
+    const cropHeight = Math.min(height - y, Math.max(1, Math.round(cropRect.height)));
+    if (cropWidth < 8 || cropHeight < 8) {
+      onStatus(language === "en" ? "The crop area is too small." : "裁切範圍太小。", true);
+      return;
+    }
+    setSaving(true);
+    try {
+      const context = canvasRef.current.getContext("2d");
+      if (!context) throw new Error("Canvas is unavailable");
+      const pixels = context.getImageData(x, y, cropWidth, cropHeight);
+      const croppedPath = await invoke<string>("save_composited_image", {
+        width: cropWidth,
+        height: cropHeight,
+        rgba: Array.from(pixels.data),
+      });
+      const intersectsCrop = (object: Annotation) => {
+        const frame = bounds(object);
+        return (
+          frame.x + frame.width >= x &&
+          frame.y + frame.height >= y &&
+          frame.x <= x + cropWidth &&
+          frame.y <= y + cropHeight
+        );
+      };
+      const shiftedObjects = objects
+        .filter(intersectsCrop)
+        .map((object) => move(object, -x, -y));
+      onCrop({
+        imagePath: croppedPath,
+        x,
+        y,
+        width: cropWidth,
+        height: cropHeight,
+        objects: shiftedObjects,
+      });
+      onStatus(language === "en" ? "Image crop applied." : "已套用影像裁切。", false);
+    } catch (reason) {
+      onStatus(String(reason), true);
+    } finally {
+      setSaving(false);
+    }
+  }
   function down(e: React.PointerEvent<SVGSVGElement>) {
     if ((e.target as Element).closest("[data-object-id],.control-point"))
       return;
@@ -866,8 +935,20 @@ export default function AnnotationEditor({
       return;
     }
     if (!start) return;
-    const end = pointFrom(e),
-      id = crypto.randomUUID();
+    const end = pointFrom(e);
+    if (tool === "crop") {
+      const nextCrop = {
+        x: Math.max(0, Math.min(start.x, end.x)),
+        y: Math.max(0, Math.min(start.y, end.y)),
+        width: Math.min(width, Math.abs(end.x - start.x)),
+        height: Math.min(height, Math.abs(end.y - start.y)),
+      };
+      if (nextCrop.width >= 8 && nextCrop.height >= 8) setCropRect(nextCrop);
+      setStart(null);
+      setCurrent(null);
+      return;
+    }
+    const id = crypto.randomUUID();
     let o: Annotation | null = null;
     if (tool === "rectangle" || tool === "ellipse" || tool === "mosaic")
       o = {
@@ -1341,7 +1422,10 @@ export default function AnnotationEditor({
                 className={tool === t ? "selected icon-tool" : "icon-tool"}
                 title={labels[t]}
                 aria-label={labels[t]}
-                onClick={() => setTool(t)}
+                onClick={() => {
+                  setTool(t);
+                  if (t !== "crop") setCropRect(null);
+                }}
               >
                 <Icon type={t} />
               </button>
@@ -1447,6 +1531,28 @@ export default function AnnotationEditor({
           </div>
         )}
       </div>
+      {tool === "crop" && (
+        <div className="property-bar crop-property-bar" role="status">
+          <span>
+            {language === "en"
+              ? "Drag on the image to choose the new image area."
+              : "在圖片上拖曳以選擇新的影像範圍。"}
+          </span>
+          <button
+            className="primary"
+            disabled={!cropRect || saving}
+            onClick={() => void applyCrop()}
+          >
+            {language === "en" ? "Apply Crop" : "套用裁切"}
+          </button>
+          <button
+            disabled={!cropRect || saving}
+            onClick={() => setCropRect(null)}
+          >
+            {language === "en" ? "Reset" : "重新選取"}
+          </button>
+        </div>
+      )}
       {(tool === "text" || selected?.type === "text") && (
         <div className="property-bar">
           <label>
@@ -1628,6 +1734,7 @@ export default function AnnotationEditor({
                 const common = {
                   "data-object-id": o.id,
                   "data-object-type": o.type,
+                  pointerEvents: tool === "crop" ? ("none" as const) : undefined,
                   onPointerEnter: () => setHovered(o.id),
                   onPointerLeave: () => setHovered(null),
                   onPointerDown: (e: React.PointerEvent<SVGElement>) =>
@@ -1897,6 +2004,38 @@ export default function AnnotationEditor({
                   strokeWidth={strokeWidth}
                   strokeLinecap="round"
                 />
+              )}
+              {cropPreview && (
+                <g className="crop-overlay" pointerEvents="none">
+                  <path
+                    d={`M 0 0 H ${width} V ${height} H 0 Z M ${cropPreview.x} ${cropPreview.y} H ${cropPreview.x + cropPreview.width} V ${cropPreview.y + cropPreview.height} H ${cropPreview.x} Z`}
+                    fill="rgba(0, 0, 0, 0.55)"
+                    fillRule="evenodd"
+                  />
+                  <rect
+                    className="crop-frame"
+                    x={cropPreview.x}
+                    y={cropPreview.y}
+                    width={cropPreview.width}
+                    height={cropPreview.height}
+                  />
+                  {[1 / 3, 2 / 3].map((ratio) => (
+                    <g key={ratio} className="crop-grid">
+                      <line
+                        x1={cropPreview.x + cropPreview.width * ratio}
+                        y1={cropPreview.y}
+                        x2={cropPreview.x + cropPreview.width * ratio}
+                        y2={cropPreview.y + cropPreview.height}
+                      />
+                      <line
+                        x1={cropPreview.x}
+                        y1={cropPreview.y + cropPreview.height * ratio}
+                        x2={cropPreview.x + cropPreview.width}
+                        y2={cropPreview.y + cropPreview.height * ratio}
+                      />
+                    </g>
+                  ))}
+                </g>
               )}
             </svg>
           )}
