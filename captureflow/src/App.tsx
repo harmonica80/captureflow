@@ -631,16 +631,27 @@ export default function App() {
           )}
         </section>
       </div>
-      <section
-        className={`version-card ${updateVersion ? "has-update" : ""}`}
-        aria-labelledby="version-card-title"
-      >
-        <div className="version-card-copy">
-          <h2 id="version-card-title">
-            <span aria-hidden="true">↻</span> {t.checkUpdates}
-          </h2>
-          <p>{t.currentVersion}：v{version}</p>
-          <span className="version-status" role="status" aria-live="polite">
+      <footer className="app-footer">
+        <div className="footer-links">
+          <span>述文老師開發</span>
+          <a
+            href="https://harmonica80.blogspot.com/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            述文老師部落格
+          </a>
+          <a
+            href="https://github.com/harmonica80/captureflow"
+            target="_blank"
+            rel="noreferrer"
+          >
+            CaptureFlow GitHub 專案
+          </a>
+        </div>
+        <div className={`footer-version ${updateVersion ? "has-update" : ""}`}>
+          <strong>{t.currentVersion}：v{version}</strong>
+          <span className="footer-version-status" role="status" aria-live="polite">
             {updateVersion
               ? `${t.newVersion}：v${updateVersion}`
               : updateStatus === "checking"
@@ -651,43 +662,26 @@ export default function App() {
                     ? t.updateFailed
                     : ""}
           </span>
-        </div>
-        <div className="version-card-actions">
-          {updateVersion && (
-            <a
-              href={`${RELEASES_URL}/tag/v${updateVersion}`}
-              target="_blank"
-              rel="noreferrer"
+          <span className="footer-version-actions">
+            {updateVersion && (
+              <a
+                href={`${RELEASES_URL}/tag/v${updateVersion}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t.viewVersion} v{updateVersion}
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={() => void checkForUpdates()}
+              disabled={updateStatus === "checking"}
             >
-              {t.viewVersion} v{updateVersion}
-            </a>
-          )}
-          <button
-            type="button"
-            onClick={() => void checkForUpdates()}
-            disabled={updateStatus === "checking"}
-          >
-            <span aria-hidden="true">↻</span>{" "}
-            {updateStatus === "checking" ? t.checking : t.check}
-          </button>
+              <span aria-hidden="true">↻</span>{" "}
+              {updateStatus === "checking" ? t.checking : t.check}
+            </button>
+          </span>
         </div>
-      </section>
-      <footer className="app-footer">
-        <span>述文老師開發</span>
-        <a
-          href="https://harmonica80.blogspot.com/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          述文老師部落格
-        </a>
-        <a
-          href="https://github.com/harmonica80/captureflow"
-          target="_blank"
-          rel="noreferrer"
-        >
-          CaptureFlow GitHub 專案
-        </a>
       </footer>
       {closePrompt && (
         <div className="close-dialog-backdrop" role="presentation">
