@@ -211,7 +211,7 @@ function Icon({ type }: { type: Tool }) {
 function ActionIcon({
   type,
 }: {
-  type: "open" | "project" | "copy" | "download" | "pin" | "close";
+  type: "open" | "project" | "copy" | "download" | "pin" | "close" | "delete";
 }) {
   const p = {
     fill: "none",
@@ -246,6 +246,12 @@ function ActionIcon({
         </>
       )}{" "}
       {type === "close" && <path d="M5 5l14 14M19 5L5 19" {...p} />}
+      {type === "delete" && (
+        <>
+          <path d="M4 7h16M9 7V4h6v3M18 7l-1 13H7L6 7" {...p} />
+          <path d="M10 11v5M14 11v5" {...p} />
+        </>
+      )}
     </svg>
   );
 }
@@ -510,6 +516,9 @@ export default function AnnotationEditor({
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const [minimapOpen, setMinimapOpen] = useState(true);
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 100, height: 100 });
+  const minimapScale = Math.min(210 / Math.max(1, width), 150 / Math.max(1, height));
+  const minimapWidth = Math.max(1, Math.round(width * minimapScale));
+  const minimapHeight = Math.max(1, Math.round(height * minimapScale));
   const selected = objects.find((o) => o.id === selectedId),
     hover = objects.find((o) => o.id === (selectedId || hoveredId));
   const draft =
@@ -660,6 +669,16 @@ export default function AnnotationEditor({
     observer.observe(stage);
     return () => observer.disconnect();
   }, [width]);
+  function fitZoomToEditor() {
+    const editorWidth = scrollRef.current?.clientWidth;
+    if (!editorWidth || width <= 0) return;
+    setZoom(Math.max(25, Math.min(300, Math.round((editorWidth / width) * 100))));
+  }
+  useEffect(() => {
+    if (loading) return;
+    const frame = requestAnimationFrame(fitZoomToEditor);
+    return () => cancelAnimationFrame(frame);
+  }, [loading, imagePath, width, height]);
   useEffect(() => {
     const base = canvasRef.current;
     const minimap = minimapRef.current;
@@ -1553,12 +1572,14 @@ export default function AnnotationEditor({
             ↷
           </button>
           <button
+            className="icon-tool delete-object-button"
             aria-label="刪除物件"
             title="刪除物件"
             onClick={removeSelected}
             disabled={!selectedId}
           >
-            ×
+            <ActionIcon type="delete" />
+            <span>刪除物件</span>
           </button>
         </div>
         {paletteOpen && (
@@ -1762,7 +1783,10 @@ export default function AnnotationEditor({
         <div
           ref={stageRef}
           className="annotation-stage"
-          style={{ aspectRatio: `${width}/${height}`, width: `${zoom}%` }}
+          style={{
+            aspectRatio: `${width}/${height}`,
+            width: `${Math.max(1, (width * zoom) / 100)}px`,
+          }}
         >
           <canvas ref={canvasRef} width={width} height={height} />
           <canvas
@@ -2141,7 +2165,7 @@ export default function AnnotationEditor({
         </div>
         </div>
         <div className={`zoom-dock${minimapOpen ? "" : " collapsed"}`}>
-          {zoomMenuOpen && <div className="zoom-menu"><button onClick={() => setZoom((value) => Math.min(300, value + 10))} disabled={zoom >= 300}>放大 <kbd>Ctrl +</kbd></button><button onClick={() => setZoom((value) => Math.max(25, value - 10))}>縮小 <kbd>Ctrl −</kbd></button><button onClick={() => setZoom(100)}>縮放至 100%</button><button onClick={() => setZoom(100)}>縮放至適合大小</button></div>}
+          {zoomMenuOpen && <div className="zoom-menu"><button onClick={() => setZoom((value) => Math.min(300, value + 10))} disabled={zoom >= 300}>放大 <kbd>Ctrl +</kbd></button><button onClick={() => setZoom((value) => Math.max(25, value - 10))}>縮小 <kbd>Ctrl −</kbd></button><button onClick={() => setZoom(100)}>縮放至 100%</button><button onClick={fitZoomToEditor}>縮放至適合大小</button></div>}
           <div className="zoom-control" role="group" aria-label="圖片縮放控制">
             <button onClick={() => setZoom((value) => Math.max(25, value - 10))} title="縮小圖片">−</button>
             <button className="zoom-value" onClick={() => setZoomMenuOpen((open) => !open)} aria-expanded={zoomMenuOpen}><output aria-live="polite">{zoom}%</output></button>
@@ -2150,6 +2174,7 @@ export default function AnnotationEditor({
           </div>
           {minimapOpen && <div
             className="zoom-minimap"
+            style={{ width: `${minimapWidth}px`, height: `${minimapHeight}px` }}
             role="application"
             aria-label="圖片縮圖導航，可點選或拖曳移動畫面"
             onPointerDown={(event) => {
