@@ -99,9 +99,18 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .editor-action-toolbar svg { width: 21px; height: 21px; }
 .editor-action-toolbar .primary-action { border-color: #1769aa; color: #071b25; background: #9bdcff; }
 .editor-action-toolbar .action-icon:first-child { display: none; }
-.update-notice { display: flex; align-items: center; justify-content: flex-end; gap: 10px; max-width: 1600px; margin: -8px auto 14px; padding: 10px 12px; border: 1px solid #527563; border-radius: 10px; color: #eef7f2; background: #123126; }
-.update-notice a, .app-footer a { color: #9bdcff; font-weight: 700; }
-.update-notice button { padding: 6px 9px; border: 1px solid #668477; border-radius: 7px; color: #eef7f2; background: #142a21; cursor: pointer; }
+.version-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; max-width: 1600px; margin: 18px auto 0; padding: 15px 18px; border: 1px solid #315444; border-radius: 14px; color: #eef7f2; background: #0c1c16; }
+.version-card-copy { display: grid; gap: 3px; }
+.version-card h2 { margin: 0; font-size: 16px; }
+.version-card p { margin: 0; color: #c3d2ca; }
+.version-status { min-height: 18px; color: #b9c9c1; font-size: 13px; }
+.version-card.has-update { border-color: #74e7ad; }
+.version-card.has-update .version-status { color: #9bf2c5; font-weight: 700; }
+.version-card-actions { display: flex; align-items: center; gap: 9px; }
+.version-card-actions a, .version-card-actions button { padding: 8px 13px; border: 1px solid #527563; border-radius: 9px; color: #eef7f2; background: #142a21; font-weight: 700; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.version-card-actions a:hover, .version-card-actions button:hover { border-color: #9bdcff; }
+.version-card-actions button:disabled { color: #c2ccc7; background: #26332e; cursor: wait; }
+.app-footer a { color: #9bdcff; font-weight: 700; }
 .app-footer { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 18px; max-width: 1600px; margin: 18px auto 0; padding: 16px; border-top: 1px solid #315444; color: #d8e7df; font-size: 13px; }
 .annotation-toolbar-wrap { position: relative; }
 .annotation-toolbar { display: flex; align-items: center; flex-wrap: wrap; max-width: 100%; gap: 6px; margin-top: 14px; padding: 7px; overflow: hidden; border: 1px solid #52685e; border-radius: 11px; background: #fafafa; color: #252525; }
@@ -193,6 +202,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .theme-light .sidebar-notice { color: #173426; background: #d9f3e5; }
 .theme-light .sidebar-notice strong { color: #075f3b; }
 .theme-light .annotation-stage, .theme-light .annotation-scroll { background: #dfe5e2; }
+.theme-light .version-card { border-color: #a9bdb3; color: #17251e; background: #fff; }
+.theme-light .version-card p, .theme-light .version-status { color: #4b5d54; }
+.theme-light .version-card.has-update { border-color: #087346; }
+.theme-light .version-card.has-update .version-status { color: #075f3b; }
+.theme-light .version-card-actions a, .theme-light .version-card-actions button { border-color: #82998d; color: #17251e; background: #f4f7f5; }
+.theme-light .version-card-actions button:disabled { color: #59665f; background: #e3e9e6; }
 .theme-light .app-footer { border-color: #a9bdb3; }
 .property-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 7px 0; padding: 8px; border: 1px solid #52685e; border-radius: 9px; color: #252525; background: #f5f5f5; }
 .property-bar label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }

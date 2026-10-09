@@ -55,7 +55,22 @@ type HistoryEntry = {
 };
 
 const RELEASES_URL = "https://github.com/harmonica80/captureflow/releases";
+const LATEST_RELEASE_API =
+  "https://api.github.com/repos/harmonica80/captureflow/releases/latest";
 type Language = "zh-TW" | "en";
+type UpdateStatus = "idle" | "checking" | "current" | "error";
+
+function isNewerVersion(latest: string, current: string) {
+  const latestParts = latest.split(".").map((part) => Number(part) || 0);
+  const currentParts = current.split(".").map((part) => Number(part) || 0);
+  const length = Math.max(latestParts.length, currentParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (latestParts[index] || 0) - (currentParts[index] || 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+}
+
 const copy = {
   "zh-TW": {
     title: "擷圖與標註工作區", theme: "色系主題", light: "淺色", dark: "深色",
@@ -69,6 +84,9 @@ const copy = {
     emptyTitle: "尚未載入擷圖", emptyHelp: "可從左側框選螢幕、選擇螢幕，或直接開啟以前的 JSON 專案。",
     start: "開始框選", closeTitle: "關閉 CaptureFlow", closeQuestion: "您要最小化視窗還是結束應用程式？",
     minimize: "最小化視窗", quit: "結束應用程式", cancel: "取消", deleteHistory: "刪除這筆記錄", deleteHistoryConfirm: "確定要刪除這筆擷圖歷史及其自動儲存檔案嗎？",
+    checkUpdates: "檢查更新", currentVersion: "目前版本", check: "檢查", checking: "檢查中…",
+    upToDate: "目前已是最新版本。", updateFailed: "目前無法檢查更新，請稍後再試。",
+    newVersion: "已有新版本", viewVersion: "查看新版",
   },
   en: {
     title: "Screenshot & Annotation Workspace", theme: "Theme", light: "Light", dark: "Dark",
@@ -82,6 +100,9 @@ const copy = {
     emptyTitle: "No screenshot loaded", emptyHelp: "Select an area, capture a display, or open an existing JSON project.",
     start: "Start Capture", closeTitle: "Close CaptureFlow", closeQuestion: "Would you like to minimize the window or quit the application?",
     minimize: "Minimize Window", quit: "Quit Application", cancel: "Cancel", deleteHistory: "Delete this entry", deleteHistoryConfirm: "Delete this capture history entry and its auto-saved files?",
+    checkUpdates: "Check for Updates", currentVersion: "Current version", check: "Check", checking: "Checking…",
+    upToDate: "CaptureFlow is up to date.", updateFailed: "Unable to check for updates. Please try again later.",
+    newVersion: "New version available", viewVersion: "View Update",
   },
 } as const;
 
@@ -103,7 +124,8 @@ export default function App() {
     [startupDraft, setStartupDraft] = useState(false),
     [languageDraft, setLanguageDraft] = useState<Language>("zh-TW"),
     [version, setVersion] = useState("0.1.0"),
-    [updateVersion, setUpdateVersion] = useState("");
+    [updateVersion, setUpdateVersion] = useState(""),
+    [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
   const [busy, setBusy] = useState(""),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
@@ -128,6 +150,25 @@ export default function App() {
     setTimeout(() => void refreshHistory(), 900);
   }
 
+  async function checkForUpdates(currentVersion = version) {
+    setUpdateStatus("checking");
+    try {
+      const response = await fetch(LATEST_RELEASE_API, {
+        cache: "no-store",
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
+      const data = await response.json();
+      const latest = String(data?.tag_name || "").replace(/^v/, "");
+      if (!latest) throw new Error("Latest release did not include a version");
+      setUpdateVersion(isNewerVersion(latest, currentVersion) ? latest : "");
+      setUpdateStatus("current");
+      localStorage.setItem("captureflow-update-check", String(Date.now()));
+    } catch {
+      setUpdateStatus("error");
+    }
+  }
+
   useEffect(() => {
     void getVersion()
       .then((value) => {
@@ -137,17 +178,7 @@ export default function App() {
           localStorage.getItem("captureflow-update-check") || 0,
         );
         if (Date.now() - last > 86_400_000) {
-          localStorage.setItem("captureflow-update-check", String(Date.now()));
-          fetch(
-            "https://api.github.com/repos/harmonica80/captureflow/releases/latest",
-            { headers: { Accept: "application/vnd.github+json" } },
-          )
-            .then((r) => (r.ok ? r.json() : null))
-            .then((data) => {
-              const latest = String(data?.tag_name || "").replace(/^v/, "");
-              if (latest && latest !== value) setUpdateVersion(latest);
-            })
-            .catch(() => {});
+          void checkForUpdates(value);
         }
       })
       .catch(() => {});
@@ -379,15 +410,6 @@ export default function App() {
           <div className="header-shortcut"><span>CaptureFlow {version}</span><strong>{settings?.captureShortcut ?? "Alt+Shift+A"}</strong></div>
         </div>
       </header>
-      {updateVersion && (
-        <aside className="update-notice" role="status">
-          <span>發現新版 CaptureFlow {updateVersion}</span>
-          <a href={RELEASES_URL} target="_blank" rel="noreferrer">
-            查看版本
-          </a>
-          <button onClick={() => setUpdateVersion("")}>稍後提醒</button>
-        </aside>
-      )}
       <div className="workspace-layout">
         <aside className="capture-sidebar" aria-label="擷取控制">
           <section className="sidebar-card">
@@ -609,6 +631,47 @@ export default function App() {
           )}
         </section>
       </div>
+      <section
+        className={`version-card ${updateVersion ? "has-update" : ""}`}
+        aria-labelledby="version-card-title"
+      >
+        <div className="version-card-copy">
+          <h2 id="version-card-title">
+            <span aria-hidden="true">↻</span> {t.checkUpdates}
+          </h2>
+          <p>{t.currentVersion}：v{version}</p>
+          <span className="version-status" role="status" aria-live="polite">
+            {updateVersion
+              ? `${t.newVersion}：v${updateVersion}`
+              : updateStatus === "checking"
+                ? t.checking
+                : updateStatus === "current"
+                  ? t.upToDate
+                  : updateStatus === "error"
+                    ? t.updateFailed
+                    : ""}
+          </span>
+        </div>
+        <div className="version-card-actions">
+          {updateVersion && (
+            <a
+              href={`${RELEASES_URL}/tag/v${updateVersion}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {t.viewVersion} v{updateVersion}
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={() => void checkForUpdates()}
+            disabled={updateStatus === "checking"}
+          >
+            <span aria-hidden="true">↻</span>{" "}
+            {updateStatus === "checking" ? t.checking : t.check}
+          </button>
+        </div>
+      </section>
       <footer className="app-footer">
         <span>述文老師開發</span>
         <a
