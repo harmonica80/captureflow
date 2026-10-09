@@ -514,7 +514,7 @@ export default function AnnotationEditor({
   } | null>(null);
   const [zoom, setZoom] = useState(100);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
-  const [minimapOpen, setMinimapOpen] = useState(true);
+  const [minimapOpen, setMinimapOpen] = useState(false);
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 100, height: 100 });
   const minimapScale = Math.min(210 / Math.max(1, width), 150 / Math.max(1, height));
   const minimapWidth = Math.max(1, Math.round(width * minimapScale));
