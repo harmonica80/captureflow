@@ -1,10 +1,10 @@
 :root { font-family: "Segoe UI Variable", "Microsoft JhengHei UI", sans-serif; color: #eef7f2; background: #07110d; font-synthesis: none; }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+body { margin: 0; min-width: 1080px; min-height: 100vh; }
 button, input { font: inherit; }
 button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid #9bdcff; outline-offset: 2px; }
 
-.app-shell { min-height: 100vh; padding: 24px; background: radial-gradient(circle at 85% 0, rgba(79,219,151,.13), transparent 34%), #07110d; }
+.app-shell { min-width: 1080px; min-height: 100vh; padding: 24px; background: radial-gradient(circle at 85% 0, rgba(79,219,151,.13), transparent 34%), #07110d; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 1600px; margin: 0 auto 20px; }
 .header-controls { display: flex; align-items: center; gap: 10px; }
 .theme-picker { display: grid; gap: 3px; color: #c3d2ca; font-size: 12px; font-weight: 700; }
@@ -15,7 +15,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .header-shortcut span { color: #b9c9c1; font-size: 12px; }
 .header-shortcut strong { color: #f4f7f5; }
 
-.workspace-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; max-width: 1600px; margin: auto; }
+.workspace-layout { display: grid; grid-template-columns: 325px minmax(640px, 1fr); gap: 22px; max-width: 1600px; margin: auto; }
 .capture-sidebar { display: grid; align-content: start; gap: 12px; }
 .sidebar-card { padding: 16px; border: 1px solid #2d4d3f; border-radius: 16px; background: #0c1c16; }
 .sidebar-card h2 { margin: 0 0 8px; font-size: 17px; }
@@ -204,17 +204,3 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .annotation-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f4f7f5; background: #26332e; font-weight: 700; }
 .settings-success { color: #c9f7df; font-weight: 700; overflow-wrap: anywhere; }
 .settings-error { padding: 10px 12px; border-left: 4px solid #ff8f86; color: #ffd8d4; background: #3b1e1d; font-weight: 700; }
-
-@media (max-width: 900px) {
-  .workspace-layout { grid-template-columns: 1fr; }
-  .capture-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .settings-card { grid-column: 1 / -1; }
-  .annotation-stage { max-height: none; }
-}
-@media (max-width: 620px) {
-  .app-shell { padding: 14px; }
-  .app-header, .workspace-heading, .annotation-heading { align-items: flex-start; flex-direction: column; }
-  .header-shortcut { text-align: left; }
-  .capture-sidebar { grid-template-columns: 1fr; }
-  .settings-card { grid-column: auto; }
-}
