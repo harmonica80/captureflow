@@ -1,14 +1,14 @@
 import "./App.css";
-import AnnotationEditor, { type AnnotationObject } from "./AnnotationEditor";
+import AnnotationEditor, { type AnnotationObject, type EditorHandle } from "./AnnotationEditor";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Image } from "@tauri-apps/api/image";
 import { join } from "@tauri-apps/api/path";
 import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type RectInfo = { x: number; y: number; width: number; height: number };
 type MonitorInfo = {
@@ -24,10 +24,6 @@ type SelectionSnapshot = {
   width: number;
   height: number;
   cornerRadius?: number;
-};
-type CropSnapshot = {
-  selection: SelectionSnapshot;
-  objects: AnnotationObject[];
 };
 type SettingsView = {
   captureShortcut: string;
@@ -113,7 +109,13 @@ export default function App() {
   const [selection, setSelection] = useState<SelectionSnapshot | null>(null),
     [objects, setObjects] = useState<AnnotationObject[]>([]),
     [editorKey, setEditorKey] = useState(0);
-  const [cropHistory, setCropHistory] = useState<CropSnapshot[]>([]);
+  const editorRef = useRef<EditorHandle>(null);
+  const selectionOrigin = useRef({ x: 0, y: 0 });
+  const originalImage = useRef("");
+  const [historyProjectPath, setHistoryProjectPath] = useState<string>();
+  const transitionQueue = useRef(Promise.resolve());
+  const transitionCount = useRef(0);
+  const [transitioning, setTransitioning] = useState(false);
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]),
     [history, setHistory] = useState<HistoryEntry[]>([]),
     [historyOpen, setHistoryOpen] = useState(false);
@@ -133,6 +135,23 @@ export default function App() {
   const language: Language = settings?.language ?? languageDraft;
   const t = copy[language];
 
+  // Serialize document transitions and keep the current editor alive on save failure.
+  function withSavedEditor(action: () => void | Promise<void>) {
+    transitionCount.current += 1;
+    setTransitioning(true);
+    const next = transitionQueue.current.then(async () => {
+      await editorRef.current?.flush();
+      await action();
+    });
+    transitionQueue.current = next.catch((reason) => {
+      setError(`無法完成操作，已保留目前圖片：${reason}`);
+    }).finally(() => {
+      transitionCount.current -= 1;
+      if (!transitionCount.current) setTransitioning(false);
+    });
+    return transitionQueue.current;
+  }
+
   async function refreshHistory() {
     try {
       setHistory(await invoke<HistoryEntry[]>("list_capture_history"));
@@ -141,9 +160,11 @@ export default function App() {
     }
   }
   function receiveSelection(captured: SelectionSnapshot) {
+    setHistoryProjectPath(undefined);
+    originalImage.current = captured.imagePath;
+    selectionOrigin.current = { x: captured.selection.x, y: captured.selection.y };
     setSelection(captured);
     setObjects([]);
-    setCropHistory([]);
     setEditorKey((k) => k + 1);
     setMessage(`擷圖已載入編輯器，並加入最近 ${settings?.historyLimit ?? 20} 筆歷史`);
     setError("");
@@ -199,7 +220,7 @@ export default function App() {
     void refreshHistory();
     const completed = listen<SelectionSnapshot>(
       "captureflow://selection-complete",
-      (event) => receiveSelection(event.payload),
+      (event) => { void withSavedEditor(() => receiveSelection(event.payload)); },
     );
     const failed = listen<string>("captureflow://selection-error", (event) =>
       setError(event.payload),
@@ -219,30 +240,34 @@ export default function App() {
     return () => { void listener.then((unlisten) => unlisten()); };
   }, []);
 
-  async function loadProjectPath(projectPath: string) {
-    setBusy("project");
-    setError("");
-    try {
-      const p = await invoke<Project>("load_annotation_project_from", {
-        projectPath,
-      });
-      setSelection({
-        imagePath: p.sourceImage,
-        metadataPath: projectPath,
-        selection: { x: 0, y: 0, width: p.canvasWidth, height: p.canvasHeight },
-        width: p.canvasWidth,
-        height: p.canvasHeight,
-      });
-      setObjects(p.objects);
-      setCropHistory([]);
-      setEditorKey((k) => k + 1);
-      setMessage("已開啟包含來源圖片的可編輯專案");
-      setHistoryOpen(false);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy("");
-    }
+  async function loadProjectPath(projectPath: string, fromHistory = false) {
+    return withSavedEditor(async () => {
+      setBusy("project");
+      setError("");
+      try {
+        const p = await invoke<Project>("load_annotation_project_from", {
+          projectPath,
+        });
+        originalImage.current = p.sourceImage;
+        setHistoryProjectPath(fromHistory ? projectPath : undefined);
+        setSelection({
+          imagePath: p.sourceImage,
+          metadataPath: projectPath,
+          selection: { x: 0, y: 0, width: p.canvasWidth, height: p.canvasHeight },
+          width: p.canvasWidth,
+          height: p.canvasHeight,
+        });
+        setObjects(p.objects);
+        selectionOrigin.current = { x: 0, y: 0 };
+        setEditorKey((k) => k + 1);
+        setMessage("已開啟包含來源圖片的可編輯專案");
+        setHistoryOpen(false);
+      } catch (reason) {
+        setError(String(reason));
+      } finally {
+        setBusy("");
+      }
+    });
   }
   async function openProject() {
     try {
@@ -258,29 +283,31 @@ export default function App() {
     }
   }
   async function runCapture(kind: "area" | "monitor", deviceName?: string) {
-    setBusy(kind === "monitor" ? (deviceName ?? "monitor") : kind);
-    setError("");
-    try {
-      const appWindow = getCurrentWindow();
-      if (kind === "area") {
-        await appWindow.minimize();
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
-      }
-      const result =
-        kind === "area"
-          ? await invoke<SelectionSnapshot | null>("select_screen_area")
-          : await invoke<SelectionSnapshot>("capture_monitor", { deviceName });
-      if (result) receiveSelection(result);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      if (kind === "area") {
+    return withSavedEditor(async () => {
+      setBusy(kind === "monitor" ? (deviceName ?? "monitor") : kind);
+      setError("");
+      try {
         const appWindow = getCurrentWindow();
-        await appWindow.unminimize();
-        await appWindow.setFocus();
+        if (kind === "area") {
+          await appWindow.minimize();
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+        }
+        const result =
+          kind === "area"
+            ? await invoke<SelectionSnapshot | null>("select_screen_area")
+            : await invoke<SelectionSnapshot>("capture_monitor", { deviceName });
+        if (result) receiveSelection(result);
+      } catch (reason) {
+        setError(String(reason));
+      } finally {
+        if (kind === "area") {
+          const appWindow = getCurrentWindow();
+          await appWindow.unminimize();
+          await appWindow.setFocus();
+        }
+        setBusy("");
       }
-      setBusy("");
-    }
+    });
   }
   async function copySelection(path?: string) {
     if (!selection) return;
@@ -369,28 +396,41 @@ export default function App() {
     } catch (reason) { setError(String(reason)); }
   }
   async function clearHistory() {
-    try {
-      await invoke("clear_capture_history");
-      setHistory([]);
-      setMessage("歷史擷圖記錄已清除；手動另存的專案不受影響");
-      setError("");
-    } catch (reason) { setError(String(reason)); }
-  }
-  async function deleteHistoryEntry(item: HistoryEntry) {
-    if (!window.confirm(t.deleteHistoryConfirm)) return;
-    try {
-      await invoke("delete_capture_history_entry", { projectPath: item.projectPath });
-      setHistory((entries) => entries.filter((entry) => entry.projectPath !== item.projectPath));
-      if (selection?.metadataPath === item.projectPath) {
+    const confirmed = await ask(language === "en"
+      ? "Delete all capture history and its auto-saved images? The current image will close. Manually saved projects and exported images are kept."
+      : "確定清除全部歷史擷圖及其自動儲存圖片？目前圖片將一併關閉。手動另存的專案及匯出圖片會保留。", {
+      title: language === "en" ? "Clear capture history" : "清除歷史擷圖記錄",
+      kind: "warning", okLabel: language === "en" ? "Clear all" : "清除全部", cancelLabel: t.cancel,
+    });
+    if (!confirmed) return;
+    return withSavedEditor(async () => {
+      try {
         setSelection(null);
         setObjects([]);
-        setEditorKey((key) => key + 1);
+        await invoke("clear_capture_history");
+        setHistory([]);
+        setMessage("歷史擷圖記錄已清除；手動另存的專案不受影響");
+        setError("");
+      } catch (reason) { setError(`清除未完成：${reason}`); await refreshHistory(); }
+    });
+  }
+  async function deleteHistoryEntry(item: HistoryEntry) {
+    if (!await ask(t.deleteHistoryConfirm, { title: t.deleteHistory, kind: "warning", okLabel: t.deleteHistory, cancelLabel: t.cancel })) return;
+    return withSavedEditor(async () => {
+      try {
+        await invoke("delete_capture_history_entry", { projectPath: item.projectPath });
+        setHistory((entries) => entries.filter((entry) => entry.projectPath !== item.projectPath));
+        if (selection?.metadataPath === item.projectPath || selection?.imagePath === item.imagePath || originalImage.current === item.imagePath) {
+          setSelection(null);
+          setObjects([]);
+          setEditorKey((key) => key + 1);
+        }
+        setMessage(t.deleteHistory);
+        setError("");
+      } catch (reason) {
+        setError(String(reason));
       }
-      setMessage(t.deleteHistory);
-      setError("");
-    } catch (reason) {
-      setError(String(reason));
-    }
+    });
   }
   async function revealCurrentImage() {
     if (!selection) return;
@@ -410,7 +450,7 @@ export default function App() {
           <div className="header-shortcut"><span>CaptureFlow {version}</span><strong>{settings?.captureShortcut ?? "Alt+Shift+A"}</strong></div>
         </div>
       </header>
-      <div className="workspace-layout">
+      <div className="workspace-layout" inert={transitioning || closePrompt} aria-busy={transitioning}>
         <aside className="capture-sidebar" aria-label="擷取控制">
           <section className="sidebar-card">
             <h2>{t.create}</h2>
@@ -431,7 +471,7 @@ export default function App() {
             </button>
             <button
               className="capture-button history-toggle"
-              onClick={() => setHistoryOpen((v) => !v)}
+              onClick={() => { setHistoryOpen((v) => !v); void refreshHistory(); }}
               aria-expanded={historyOpen}
             >
               <span aria-hidden="true">{historyOpen ? "▼" : "▶"}</span>
@@ -447,7 +487,7 @@ export default function App() {
                   return <div className="history-entry-row" key={item.projectPath}>
                     <button
                       className="history-entry"
-                      onClick={() => loadProjectPath(item.projectPath)}
+                      onClick={() => loadProjectPath(item.projectPath, true)}
                       title={capturedAt.toLocaleString(language)}
                     >
                       {item.thumbnailDataUrl ? (
@@ -539,7 +579,7 @@ export default function App() {
                 <option value="zh-TW">{t.traditionalChinese}</option>
                 <option value="en">{t.english}</option>
               </select>
-              <button className="capture-button primary" onClick={applyPreferences}>{t.savePreferences}</button>
+              <button className="capture-button primary" onClick={() => void withSavedEditor(applyPreferences)}>{t.savePreferences}</button>
             </details>
           )}
           {(message || error) && (
@@ -555,6 +595,8 @@ export default function App() {
         <section className="editor-workspace" aria-label="圖片編輯工作區">
           {selection ? (
             <AnnotationEditor
+              ref={editorRef}
+              historyProjectPath={historyProjectPath}
               key={editorKey}
               imagePath={selection.imagePath}
               width={selection.width}
@@ -563,29 +605,7 @@ export default function App() {
               onCopy={copySelection}
               onSave={saveSelection}
               onSticker={openSticker}
-              canUndoCrop={cropHistory.length > 0}
-              onUndoCrop={() => {
-                setCropHistory((history) => {
-                  const previous = history[history.length - 1];
-                  if (!previous) return history;
-                  setSelection(previous.selection);
-                  setObjects(previous.objects);
-                  setEditorKey((key) => key + 1);
-                  setMessage(
-                    language === "en"
-                      ? "Crop undone. The previous image size and annotations were restored."
-                      : "已復原裁切，並還原先前的圖片尺寸與標註。",
-                  );
-                  return history.slice(0, -1);
-                });
-              }}
-              onCrop={(result) => {
-                if (selection) {
-                  setCropHistory((history) => [
-                    ...history,
-                    { selection, objects: [...objects] },
-                  ]);
-                }
+              onDocumentChange={(result) => {
                 setSelection((current) =>
                   current
                     ? {
@@ -594,8 +614,8 @@ export default function App() {
                         width: result.width,
                         height: result.height,
                         selection: {
-                          x: current.selection.x + result.x,
-                          y: current.selection.y + result.y,
+                          x: selectionOrigin.current.x + result.offsetX,
+                          y: selectionOrigin.current.y + result.offsetY,
                           width: result.width,
                           height: result.height,
                         },
@@ -603,12 +623,8 @@ export default function App() {
                     : current,
                 );
                 setObjects(result.objects);
-                setEditorKey((key) => key + 1);
               }}
-              onClose={() => {
-                setSelection(null);
-                setCropHistory([]);
-              }}
+              onClose={() => void withSavedEditor(() => { setSelection(null); setObjects([]); })}
               onStatus={(status, isError) => {
                 isError
                   ? (setError(status), setMessage(""))
@@ -688,10 +704,11 @@ export default function App() {
           <section className="close-dialog" role="dialog" aria-modal="true" aria-labelledby="close-dialog-title">
             <h2 id="close-dialog-title">{t.closeTitle}</h2>
             <p>{t.closeQuestion}</p>
+            {error && <p className="settings-error" role="alert">{error}</p>}
             <div className="close-dialog-actions">
-              <button className="capture-button primary" onClick={async () => { setClosePrompt(false); await getCurrentWindow().hide(); }}>{t.minimize}</button>
-              <button className="capture-button danger" onClick={() => void getCurrentWindow().destroy()}>{t.quit}</button>
-              <button className="capture-button" onClick={() => setClosePrompt(false)}>{t.cancel}</button>
+              <button className="capture-button primary" disabled={transitioning} onClick={() => void withSavedEditor(async () => { setClosePrompt(false); await getCurrentWindow().hide(); })}>{t.minimize}</button>
+              <button className="capture-button danger" disabled={transitioning} onClick={() => void withSavedEditor(async () => { await getCurrentWindow().destroy(); })}>{t.quit}</button>
+              <button className="capture-button" disabled={transitioning} onClick={() => setClosePrompt(false)}>{t.cancel}</button>
             </div>
           </section>
         </div>

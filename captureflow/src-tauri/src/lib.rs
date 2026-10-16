@@ -176,8 +176,18 @@ fn auto_save_annotation_project(
     canvas_width: u32,
     canvas_height: u32,
     objects: serde_json::Value,
+    history_image_path: Option<String>,
+    history_project_path: Option<String>,
 ) -> Result<String, String> {
-    annotation::auto_save_project(&app, &image_path, canvas_width, canvas_height, objects)
+    annotation::auto_save_project(
+        &app,
+        &image_path,
+        canvas_width,
+        canvas_height,
+        objects,
+        history_image_path.as_deref(),
+        history_project_path.as_deref(),
+    )
 }
 
 #[tauri::command]

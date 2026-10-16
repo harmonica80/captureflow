@@ -38,6 +38,10 @@ jobs:
         run: npm ci
       - name: Check frontend
         run: npm run build
+      - name: Install test browser
+        run: npx playwright install chromium
+      - name: Check editor workflows
+        run: npm test
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - name: Build portable executable

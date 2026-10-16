@@ -215,3 +215,19 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .annotation-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #f4f7f5; background: #26332e; font-weight: 700; }
 .settings-success { color: #c9f7df; font-weight: 700; overflow-wrap: anywhere; }
 .settings-error { padding: 10px 12px; border-left: 4px solid #ff8f86; color: #ffd8d4; background: #3b1e1d; font-weight: 700; }
+
+.theme-light .footer-links a { color: #075f3b; }
+.theme-light .footer-links a:hover, .theme-light .footer-links a:active { color: #064b30; }
+.theme-light .capture-button:disabled { color: #46534c; background: #e3e9e6; border-color: #82998d; }
+.theme-light .sidebar-notice.error { color: #75211c; background: #ffe8e5; }
+.theme-light .sidebar-notice.error strong { color: #75211c; }
+.theme-light .capture-button.danger { color: #75211c; background: #ffe8e5; border-color: #a95852; }
+.theme-light .capture-button.danger:hover { color: #75211c; background: #ffd8d4; }
+.autosave-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 6px 0; color: #d8f7e7; font-size: 12px; }
+.autosave-status span { overflow-wrap: anywhere; }
+.autosave-status.error { padding: 8px; color: #ffd8d4; background: #3b1e1d; border-radius: 6px; }
+.autosave-status button { padding: 4px 8px; color: #17251e; background: #f4f7f5; border: 1px solid #82998d; border-radius: 5px; cursor: pointer; }
+.theme-light .autosave-status { color: #3c5147; }
+.theme-light .autosave-status.error { color: #75211c; background: #ffe8e5; }
+.theme-light :is(button, input, select, summary, a):focus-visible { outline: 3px solid #1769aa; outline-offset: 2px; }
+.theme-dark :is(select, a):focus-visible { outline: 3px solid #9bdcff; outline-offset: 2px; }

@@ -165,9 +165,13 @@ pub fn auto_save_project(
     canvas_width: u32,
     canvas_height: u32,
     objects: serde_json::Value,
+    history_image_path: Option<&str>,
+    history_project_path: Option<&str>,
 ) -> Result<String, String> {
     let source = fs::canonicalize(image_path).map_err(|error| format!("無法讀取底圖：{error}"))?;
-    let stem = source
+    // A crop changes the source image, but remains the same history entry.
+    let history_source = history_image_path.map(Path::new).unwrap_or(&source);
+    let stem = history_source
         .file_stem()
         .and_then(|value| value.to_str())
         .ok_or("擷圖檔名不正確")?;
@@ -177,7 +181,19 @@ pub fn auto_save_project(
         .map_err(|error| error.to_string())?
         .join("history");
     fs::create_dir_all(&history_dir).map_err(|error| format!("無法建立歷史資料夾：{error}"))?;
-    let output = history_dir.join(format!("{stem}.captureflow.json"));
+    let output = if let Some(existing) = history_project_path {
+        let existing =
+            fs::canonicalize(existing).map_err(|error| format!("無法開啟歷史專案：{error}"))?;
+        let root = fs::canonicalize(&history_dir).map_err(|error| error.to_string())?;
+        if existing.parent() != Some(root.as_path())
+            || existing.extension().and_then(|s| s.to_str()) != Some("json")
+        {
+            return Err("只能更新 CaptureFlow 歷史資料夾中的專案。".into());
+        }
+        existing
+    } else {
+        history_dir.join(format!("{stem}.captureflow.json"))
+    };
     let saved = save_project(
         app,
         image_path,
@@ -254,18 +270,10 @@ pub fn delete_history_entry(app: &AppHandle, project_path: &str) -> Result<(), S
         .ok()
         .and_then(|bytes| serde_json::from_slice::<AnnotationProject>(&bytes).ok())
         .map(|entry| std::path::PathBuf::from(entry.source_image));
-    fs::remove_file(&project).map_err(|error| format!("無法刪除歷史記錄：{error}"))?;
-
-    // Only remove associated captures owned by this application's data folder.
     if let Some(image) = source_image {
-        if let (Ok(app_root), Ok(image_path)) =
-            (fs::canonicalize(&app_data), fs::canonicalize(&image))
-        {
-            if image_path.starts_with(app_root) {
-                let _ = fs::remove_file(image_path.with_extension("json"));
-                let _ = fs::remove_file(image_path);
-            }
-        }
+        remove_history_files(app, &project, &image)?;
+    } else {
+        fs::remove_file(project).map_err(|error| format!("無法刪除歷史記錄：{error}"))?;
     }
     Ok(())
 }
@@ -288,9 +296,7 @@ pub fn prune_history(app: &AppHandle, keep: usize) -> Result<(), String> {
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     for (_, project_path, image_path) in entries.into_iter().skip(keep) {
         let image = std::path::PathBuf::from(image_path);
-        let _ = fs::remove_file(project_path);
-        let _ = fs::remove_file(image.with_extension("json"));
-        let _ = fs::remove_file(image);
+        remove_history_files(app, &project_path, &image)?;
     }
     Ok(())
 }
@@ -314,9 +320,35 @@ pub fn clear_history(app: &AppHandle) -> Result<(), String> {
             continue;
         };
         let image = std::path::PathBuf::from(image_path);
-        let _ = fs::remove_file(project_path);
-        let _ = fs::remove_file(image.with_extension("json"));
-        let _ = fs::remove_file(image);
+        remove_history_files(app, &project_path, &image)?;
+    }
+    Ok(())
+}
+
+fn remove_history_files(app: &AppHandle, project: &Path, image: &Path) -> Result<(), String> {
+    let app_root = fs::canonicalize(
+        app.path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::remove_file(project).map_err(|error| format!("無法清除歷史專案：{error}"))?;
+    // Never follow a JSON source path outside the application's managed captures.
+    if let Ok(source) = fs::canonicalize(image) {
+        // Imported projects and older versions can share a source image.
+        let still_referenced = fs::read_dir(app_root.join("history"))
+            .map_err(|error| error.to_string())?
+            .flatten()
+            .filter_map(|entry| fs::read(entry.path()).ok())
+            .filter_map(|bytes| serde_json::from_slice::<AnnotationProject>(&bytes).ok())
+            .any(|entry| fs::canonicalize(entry.source_image).ok().as_ref() == Some(&source));
+        if source.starts_with(&app_root) && !still_referenced {
+            fs::remove_file(&source).map_err(|error| format!("無法清除歷史圖片：{error}"))?;
+            let metadata = source.with_extension("json");
+            if metadata.exists() {
+                fs::remove_file(metadata).map_err(|error| format!("無法清除擷取資料：{error}"))?;
+            }
+        }
     }
     Ok(())
 }

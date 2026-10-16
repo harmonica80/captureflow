@@ -5,3 +5,6 @@ captureflow/src-tauri/target/
 captureflow/release/
 artifact-*/
 *.log
+captureflow/test-results/
+captureflow/playwright-report/
+qa-artifacts/

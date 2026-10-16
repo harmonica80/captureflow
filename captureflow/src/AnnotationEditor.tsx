@@ -2,7 +2,8 @@ import { Image } from "@tauri-apps/api/image";
 import { invoke } from "@tauri-apps/api/core";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { save } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import { AutoSaveQueue, ownsEditingKeys, type ImageDocument, type SaveState } from "./editorSession";
 
 type Point = { x: number; y: number };
 type Tool =
@@ -76,7 +77,11 @@ type Annotation =
   | TextObject
   | NumberObject;
 export type AnnotationObject = Annotation;
+type DocumentSnapshot = ImageDocument<Annotation>;
+export type EditorHandle = { flush: () => Promise<void> };
 type Props = {
+  ref?: Ref<EditorHandle>;
+  historyProjectPath?: string;
   imagePath: string;
   width: number;
   height: number;
@@ -84,16 +89,7 @@ type Props = {
   onCopy: (imagePath?: string) => Promise<void>;
   onSave: (imagePath?: string) => Promise<void>;
   onSticker: (imagePath?: string) => Promise<void>;
-  onCrop: (result: {
-    imagePath: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    objects: Annotation[];
-  }) => void;
-  canUndoCrop: boolean;
-  onUndoCrop: () => void;
+  onDocumentChange: (document: DocumentSnapshot) => void;
   onClose: () => void;
   onStatus: (message: string, isError?: boolean) => void;
   language?: "zh-TW" | "en";
@@ -438,20 +434,24 @@ function pixelate(ctx: CanvasRenderingContext2D, o: BoxObject, block: number) {
 }
 
 export default function AnnotationEditor({
-  imagePath,
-  width,
-  height,
+  ref,
+  historyProjectPath,
+  imagePath: initialImagePath,
+  width: initialWidth,
+  height: initialHeight,
   initialObjects = [],
   onCopy,
   onSave,
   onSticker,
-  onCrop,
-  canUndoCrop,
-  onUndoCrop,
+  onDocumentChange,
   onClose,
   onStatus,
   language = "zh-TW",
 }: Props) {
+  const [source, setSource] = useState({
+    imagePath: initialImagePath, width: initialWidth, height: initialHeight, offsetX: 0, offsetY: 0,
+  });
+  const { imagePath, width, height } = source;
   const labels = language === "en" ? labelsEn : labelsZh;
   const canvasRef = useRef<HTMLCanvasElement>(null),
     previewRef = useRef<HTMLCanvasElement>(null),
@@ -465,8 +465,8 @@ export default function AnnotationEditor({
     [strokeWidth, setStrokeWidth] = useState(4),
     [lineStyle, setLineStyle] = useState<LineStyle>("solid"),
     [objects, setObjects] = useState<Annotation[]>(initialObjects),
-    [undoStack, setUndo] = useState<Annotation[][]>([]),
-    [redoStack, setRedo] = useState<Annotation[][]>([]),
+    [undoStack, setUndo] = useState<DocumentSnapshot[]>([]),
+    [redoStack, setRedo] = useState<DocumentSnapshot[]>([]),
     [selectedId, setSelected] = useState<string | null>(null),
     [hoveredId, setHovered] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -542,8 +542,9 @@ export default function AnnotationEditor({
       context.measureText(editing.value || " ").width + 4,
     );
   }, [editing, fontFamily, fontSize, bold, italic]);
+  const currentDocument = (): DocumentSnapshot => ({ ...source, objects });
   const snapshot = () => {
-    setUndo((s) => [...s, objects]);
+    setUndo((s) => [...s, currentDocument()]);
     setRedo([]);
   };
   const pointFrom = (e: React.PointerEvent<SVGSVGElement>): Point => {
@@ -556,10 +557,12 @@ export default function AnnotationEditor({
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     (async () => {
-      const source = await Image.fromPath(imagePath);
+      let image: Image | undefined;
       try {
-        const rgba = await source.rgba();
+        image = await Image.fromPath(imagePath);
+        const rgba = await image.rgba();
         if (!cancelled)
           canvasRef.current
             ?.getContext("2d")
@@ -569,9 +572,9 @@ export default function AnnotationEditor({
               0,
             );
       } catch (e) {
-        setError(String(e));
+        if (!cancelled) setError(String(e));
       } finally {
-        await source.close();
+        await image?.close();
         if (!cancelled) setLoading(false);
       }
     })();
@@ -733,20 +736,36 @@ export default function AnnotationEditor({
     if (error) onStatus(error, true);
     else if (message) onStatus(message);
   }, [error, message]);
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void invoke("auto_save_annotation_project", {
-        imagePath,
-        canvasWidth: width,
-        canvasHeight: height,
-        objects,
-      }).catch((e) => onStatus(`無法自動保存歷史專案：${e}`, true));
-    }, 600);
-    return () => window.clearTimeout(timer);
-  }, [imagePath, width, height, objects]);
+  const [saveState, setSaveState] = useState<SaveState>("pending");
+  const [saveError, setSaveError] = useState("");
+  const [autoSave] = useState(() => new AutoSaveQueue<DocumentSnapshot>(
+    (document) => invoke("auto_save_annotation_project", {
+      imagePath: document.imagePath,
+      historyImagePath: initialImagePath,
+      historyProjectPath,
+      canvasWidth: document.width,
+      canvasHeight: document.height,
+      objects: document.objects,
+    }),
+    (state, reason) => {
+      setSaveState(state);
+      setSaveError(state === "error" ? String(reason) : "");
+    },
+  ));
+  useLayoutEffect(() => {
+    autoSave.schedule(currentDocument());
+    onDocumentChange(currentDocument());
+  }, [source, objects]);
+  useEffect(() => () => autoSave.cancelTimer(), [autoSave]);
+  useImperativeHandle(ref, () => ({
+    async flush() {
+      if (saving || moving || start) throw new Error("請先完成目前的編輯操作，再切換圖片。");
+      await autoSave.flush();
+    },
+  }));
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
-      if (editing) return;
+      if (editing || loading || saving || e.isComposing || ownsEditingKeys(e.target)) return;
       if (e.ctrlKey && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.shiftKey ? redo() : undo();
@@ -784,7 +803,7 @@ export default function AnnotationEditor({
           Math.max(1, Math.min(32, target.strokeWidth + step)),
         );
       }
-      setUndo((stack) => [...stack, objects]);
+      setUndo((stack) => [...stack, currentDocument()]);
       setRedo([]);
       setObjects((items) =>
         items.map((object) =>
@@ -824,22 +843,29 @@ export default function AnnotationEditor({
     svg.addEventListener("wheel", handleWheel, { passive: false });
     return () => svg.removeEventListener("wheel", handleWheel);
   }, [hoveredId, objects]);
+  function restoreDocument(document: DocumentSnapshot) {
+    if (document.imagePath !== imagePath) setLoading(true);
+    setSource({ imagePath: document.imagePath, width: document.width, height: document.height,
+      offsetX: document.offsetX, offsetY: document.offsetY });
+    setObjects(document.objects);
+    setSelected(null);
+    setHovered(null);
+    setEditing(null);
+    setCropRect(null);
+  }
   function undo() {
     const p = undoStack[undoStack.length - 1];
-    if (!p) {
-      if (canUndoCrop) onUndoCrop();
-      return;
-    }
-    setRedo((s) => [...s, objects]);
-    setObjects(p);
+    if (!p) return;
+    setRedo((s) => [...s, currentDocument()]);
+    restoreDocument(p);
     setUndo((s) => s.slice(0, -1));
     setSelected(null);
   }
   function redo() {
     const n = redoStack[redoStack.length - 1];
     if (!n) return;
-    setUndo((s) => [...s, objects]);
-    setObjects(n);
+    setUndo((s) => [...s, currentDocument()]);
+    restoreDocument(n);
     setRedo((s) => s.slice(0, -1));
     setSelected(null);
   }
@@ -894,7 +920,7 @@ export default function AnnotationEditor({
     window.addEventListener("pointerup", finish);
   }
   async function applyCrop() {
-    if (!cropRect || !canvasRef.current) return;
+    if (loading || saving || !cropRect || !canvasRef.current) return;
     const x = Math.max(0, Math.floor(cropRect.x));
     const y = Math.max(0, Math.floor(cropRect.y));
     const cropWidth = Math.min(width - x, Math.max(1, Math.round(cropRect.width)));
@@ -925,10 +951,11 @@ export default function AnnotationEditor({
       const shiftedObjects = objects
         .filter(intersectsCrop)
         .map((object) => move(object, -x, -y));
-      onCrop({
+      snapshot();
+      restoreDocument({
         imagePath: croppedPath,
-        x,
-        y,
+        offsetX: source.offsetX + x,
+        offsetY: source.offsetY + y,
         width: cropWidth,
         height: cropHeight,
         objects: shiftedObjects,
@@ -941,6 +968,7 @@ export default function AnnotationEditor({
     }
   }
   function down(e: React.PointerEvent<SVGSVGElement>) {
+    if (loading || saving) return;
     if ((e.target as Element).closest("[data-object-id],.control-point"))
       return;
     const p = pointFrom(e);
@@ -999,7 +1027,7 @@ export default function AnnotationEditor({
     if (moving) {
       setUndo((s) => [
         ...s,
-        objects.map((o) => (o.id === moving.id ? moving.object : o)),
+        { ...source, objects: objects.map((o) => (o.id === moving.id ? moving.object : o)) },
       ]);
       setRedo([]);
       setMoving(null);
@@ -1170,7 +1198,7 @@ export default function AnnotationEditor({
   function changeEditingText(value: string) {
     if (!editing) return;
     if (!editing.historyCaptured) {
-      setUndo((stack) => [...stack, objects]);
+      setUndo((stack) => [...stack, currentDocument()]);
       setRedo([]);
     }
     const existing = objects.some((object) => object.id === editing.id);
@@ -1195,7 +1223,7 @@ export default function AnnotationEditor({
       if (exists) setObjects((items) => items.filter((object) => object.id !== editing.id));
       setSelected(null);
     } else if (!exists) {
-      setUndo((stack) => [...stack, objects]);
+      setUndo((stack) => [...stack, currentDocument()]);
       setRedo([]);
       setObjects((items) => [...items, textObjectFromEditing(editing.value)]);
       setSelected(editing.id);
@@ -1416,7 +1444,7 @@ export default function AnnotationEditor({
   }
   const shownObjects = useMemo(() => objects, [objects]);
   return (
-    <section className="annotation-editor">
+    <section className="annotation-editor" inert={saving} aria-busy={saving || loading}>
       <div className="annotation-heading">
         <div>
           <span>物件式編輯</span>
@@ -1446,7 +1474,7 @@ export default function AnnotationEditor({
           <button
             className="action-icon"
             onClick={applyAndCopy}
-            disabled={saving}
+            disabled={saving || loading}
             title="套用標註並複製圖片"
             aria-label="套用標註並複製圖片"
           >
@@ -1455,7 +1483,7 @@ export default function AnnotationEditor({
           <button
             className="action-icon primary-action"
             onClick={applyAndSave}
-            disabled={saving}
+            disabled={saving || loading}
             title="套用標註並另存圖片"
             aria-label="套用標註並另存圖片"
           >
@@ -1464,7 +1492,7 @@ export default function AnnotationEditor({
           <button
             className="action-icon"
             onClick={applyAndSticker}
-            disabled={saving}
+            disabled={saving || loading}
             title="套用標註並建立置頂貼圖"
             aria-label="套用標註並建立置頂貼圖"
           >
@@ -1559,7 +1587,7 @@ export default function AnnotationEditor({
             aria-label="復原"
             title="復原"
             onClick={undo}
-            disabled={!undoStack.length && !canUndoCrop}
+            disabled={!undoStack.length || saving || loading}
           >
             ↶
           </button>
@@ -1567,7 +1595,7 @@ export default function AnnotationEditor({
             aria-label="重做"
             title="重做"
             onClick={redo}
-            disabled={!redoStack.length}
+            disabled={!redoStack.length || saving || loading}
           >
             ↷
           </button>
@@ -1774,6 +1802,13 @@ export default function AnnotationEditor({
         {labels[tool]}工具 · 滑過或選取物件後可用滾輪調整粗細或大小 ·
         箭頭中央節點可調整彎曲 · Ctrl+Z 復原
       </p>
+      <div className={`autosave-status ${saveState === "error" ? "error" : ""}`} role="status" aria-live="polite">
+        {saveState === "saved" ? (language === "en" ? "✓ Saved to history" : "✓ 已儲存至歷史")
+          : saveState === "error" ? (language === "en" ? "⚠ Save failed; keep this image open." : "⚠ 保存失敗，請先保留目前圖片。")
+          : (language === "en" ? "Saving…" : "儲存中…")}
+        {saveError && <span>{saveError}</span>}
+        {saveState === "error" && <button onClick={() => void autoSave.flush().catch(() => {})}>{language === "en" ? "Retry" : "重試保存"}</button>}
+      </div>
       <div className="annotation-canvas-shell">
         <div
           ref={scrollRef}
