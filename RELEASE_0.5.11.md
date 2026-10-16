@@ -23,12 +23,19 @@
 
 | 介面文字 | 前景 | 背景 | 對比 |
 |---|---|---|---|
-| 淺色頁尾連結 | #075f3b | #eef2f0 | 依測試至少 4.5:1 |
-| 淺色錯誤狀態 | #75211c | #ffe8e5 | 依測試至少 4.5:1 |
-| 淺色保存狀態 | #3c5147 | #ffffff | 依測試至少 4.5:1 |
-| 深色錯誤狀態 | #ffd8d4 | #3b1e1d | 依測試至少 4.5:1 |
+| 淺色頁尾連結 | #075f3b | #eef2f0 | 6.86:1；hover／active 為 #064b30，9.04:1 |
+| 淺色錯誤狀態 | #75211c | #ffe8e5 | 9.00:1 |
+| 淺色保存狀態 | #3c5147 | #ffffff | 8.54:1 |
+| 深色錯誤狀態 | #ffd8d4 | #3b1e1d | 11.53:1 |
 
 ## 交付驗證
 
-- Windows GitHub Actions、portable EXE 實機驗證與公開下載 SHA-256：待本次建置後補記。
+- Windows [GitHub Actions 建置與測試](https://github.com/harmonica80/captureflow/actions/runs/38904894611) 通過，來源提交為 `d468a6eb475113bf0bf3a4ef1bb72fceaba6c529`。
+- Windows portable EXE 實機驗證：載入內嵌測試圖、新增矩形、600 × 400 裁切為 461 × 230、Ctrl+Z 復原、Ctrl+Shift+Z 重做、關圖後從歷史重開、正常結束後重新啟動再開啟，兩個標註與尺寸均正確保存，且只增加一筆歷史記錄。
+- 原生清除確認視窗正常顯示；取消後資料保留。實機未執行清除全部，確認刪除分支由模擬 Tauri I/O 的回歸測試驗證。
+- 測試後已還原設定與貼圖記錄，移除 3 個合成測試檔；243 個原有資料檔的 SHA-256 全數維持一致。
+- 成品 `CaptureFlow-portable.exe`：6,603,776 bytes，檔案版本 0.5.11。
+- SHA-256：`E9258FF811B08E6D7241A0107681D34AC766C976691509A63FD113ED9F4584C6`。
+- [公開下載](https://github.com/harmonica80/captureflow/releases/download/v0.5.11/CaptureFlow-portable.exe) 已回傳 HTTP 200 與正確附件檔名；重新下載的大小與 SHA-256 和上述 Actions 成品一致。
+- 本次未重新實測多螢幕／混合 DPI 擷取、長擷圖與置頂貼圖；原生選取與貼圖樣式未修改。
 - 長擷圖、滾輪操作習慣與直接複製流程保持現況，屬於後續討論批次。
