@@ -15,4 +15,8 @@
 
 ## 免安裝交付
 
-待 GitHub Actions 成品與公開下載驗證完成後補記。
+- GitHub Actions：[Build portable EXE #41402603528](https://github.com/harmonica80/captureflow/actions/runs/41402603528)。
+- 來源提交：`74177fabb503118757e0a0ea617d0f6fc300216f`。
+- Actions 建置與全部檢查通過；`CaptureFlow-portable.exe` 檔案版本為 0.5.12，大小為 6,605,824 bytes。
+- SHA-256：`4848371175B26308FB594CE6853958EBC5700CD0F53EC97AE31161538F03CA68`。
+- [公開下載](https://github.com/harmonica80/captureflow/releases/download/v0.5.12/CaptureFlow-portable.exe) 回傳 HTTP 200，附件名稱為 `CaptureFlow-portable.exe`；重新下載的檔案大小與 SHA-256 均和 Actions 成品一致。
