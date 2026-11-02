@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
       invoke: async (command: string, args: any = {}) => {
         w.qa.calls.push({ command, args });
         switch (command) {
-          case "plugin:app|version": return "0.5.11";
+          case "plugin:app|version": return "0.5.12";
           case "get_settings": return { captureShortcut: "Alt+Shift+A", historyLimit: 20, language: "zh-TW", defaultSaveDirectory: "", launchAtStartup: false };
           case "list_monitors": return [{ deviceName: "DISPLAY1" }];
           case "list_capture_history": return w.qa.history;

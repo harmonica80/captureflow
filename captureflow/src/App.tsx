@@ -1,4 +1,5 @@
 import "./App.css";
+import ccLicenseBadge from "./assets/cc-by-nc-sa-4.0.png";
 import AnnotationEditor, { type AnnotationObject, type EditorHandle } from "./AnnotationEditor";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
@@ -697,6 +698,20 @@ export default function App() {
               {updateStatus === "checking" ? t.checking : t.check}
             </button>
           </span>
+        </div>
+        <div className="footer-license">
+          <a
+            href="https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hant"
+            target="_blank"
+            rel="license noreferrer"
+          >
+            <img src={ccLicenseBadge} width="88" height="31" alt="CC BY-NC-SA 4.0" />
+            <span>
+              {language === "en"
+                ? "Licensed under Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International."
+                : "本作品採用「創用 CC 姓名標示－非商業性－相同方式分享 4.0 國際授權條款」授權。"}
+            </span>
+          </a>
         </div>
       </footer>
       {closePrompt && (
