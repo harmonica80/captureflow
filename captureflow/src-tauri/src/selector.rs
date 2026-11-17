@@ -1057,13 +1057,13 @@ mod platform {
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
                     GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadCursorW,
                     PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetCursorPos,
-                    SetForegroundWindow, SetTimer, SetWindowDisplayAffinity, ShowWindow,
-                    TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT,
-                    IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS,
-                    IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_HIDE, SW_SHOW, WDA_EXCLUDEFROMCAPTURE,
-                    WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
-                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
-                    WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    SetForegroundWindow, SetTimer, ShowWindow, TranslateMessage, CS_HREDRAW,
+                    CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS,
+                    IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
+                    MSG, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY,
+                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+                    WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
+                    WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -1390,8 +1390,8 @@ mod platform {
             None,
         )
         .map_err(|error| format!("無法建立選取覆蓋層：{error}"))?;
-        SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
-            .map_err(|error| format!("無法排除 CaptureFlow 遮罩擷取：{error}"))?;
+        // Keep the selector visible to desktop recorders. Our own output uses
+        // the pre-selector frame, or for scrolling, a frame taken while hidden.
         ShowWindow(hwnd, SW_SHOW);
         SetForegroundWindow(hwnd);
         let _ = SetFocus(Some(hwnd));
