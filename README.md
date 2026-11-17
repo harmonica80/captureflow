@@ -26,9 +26,11 @@ CaptureFlow 是一套 Windows 免安裝螢幕擷圖與物件式標註工具，�
 5. 使用工具列輸出圖片、複製至剪貼簿、建立置頂貼圖或儲存 JSON 專案。
 6. 從左側「歷史擷圖記錄」或「開啟 JSON 專案」繼續過去的編輯工作。
 
+錄製 CaptureFlow 操作示範時，請在外部工具選擇「顯示器」或「整個螢幕」作為來源，讓獨立的框選視窗和工具列一併入鏡。
+
 ## 下載
 
-[下載 CaptureFlow 0.5.12 免安裝版](https://github.com/harmonica80/captureflow/releases/download/v0.5.12/CaptureFlow-portable.exe)
+[下載 CaptureFlow 0.5.13 免安裝版](https://github.com/harmonica80/captureflow/releases/download/v0.5.13/CaptureFlow-portable.exe)
 
 Windows 可能會對未簽章的免安裝程式顯示 SmartScreen 提醒。請確認下載來源及發布頁提供的 SHA-256 後再執行。
 
