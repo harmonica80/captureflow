@@ -271,8 +271,11 @@ test("history picker cancels, forwards desktop coordinates, and preserves the ed
   const calls = await page.evaluate(() => (window as any).qa.calls as { command: string; args: unknown }[]);
   const repeat = calls.findIndex(({ command }) => command === "repeat_history_selection");
   expect(calls[repeat].args).toEqual({ selection: savedRange });
-  expect(calls[repeat - 1].command).toBe("plugin:window|minimize");
-  expect(calls[repeat + 1].command).toBe("plugin:window|unminimize");
+  const windowCommands = calls.map(({ command }) => command).filter((command) =>
+    ["plugin:window|minimize", "repeat_history_selection", "plugin:window|unminimize"].includes(command),
+  );
+  const captureSequence = ["plugin:window|minimize", "repeat_history_selection", "plugin:window|unminimize"];
+  expect(windowCommands).toEqual([...captureSequence, ...captureSequence]);
   expect(calls.slice(0, repeat).some(({ command }) => command === "auto_save_annotation_project")).toBe(true);
   expect(calls.some(({ command }) => command === "load_annotation_project_from")).toBe(false);
 });
