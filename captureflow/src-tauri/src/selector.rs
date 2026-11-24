@@ -211,23 +211,45 @@ fn best_vertical_overlap(previous: &[u8], current: &[u8], width: usize, height: 
 
 pub fn repeat_last_area(app: AppHandle) -> Result<SelectionSnapshot, String> {
     let previous = load_last_selection(&app)?;
-    let global_selection = previous.selection;
+    recapture_area(&app, previous.selection, previous.corner_radius)
+}
+
+pub fn repeat_history_area(
+    app: AppHandle,
+    selection: RectInfo,
+) -> Result<SelectionSnapshot, String> {
+    let snapshot = recapture_area(&app, selection, 0)?;
+    save_last_selection(&app, selection, 0)?;
+    Ok(snapshot)
+}
+
+fn recapture_area(
+    app: &AppHandle,
+    global_selection: RectInfo,
+    corner_radius: i32,
+) -> Result<SelectionSnapshot, String> {
     let frame = capture_frame()?;
+    let out_of_bounds = "擷取範圍已超出目前螢幕，請重新框選。";
+    let desktop = frame.virtual_desktop;
     let local_selection = RectInfo {
-        x: global_selection.x - frame.virtual_desktop.x,
-        y: global_selection.y - frame.virtual_desktop.y,
-        width: global_selection.width,
-        height: global_selection.height,
+        x: global_selection
+            .x
+            .checked_sub(desktop.x)
+            .ok_or(out_of_bounds)?,
+        y: global_selection
+            .y
+            .checked_sub(desktop.y)
+            .ok_or(out_of_bounds)?,
+        ..global_selection
     };
     save_selection(
-        &app,
+        app,
         &frame,
         local_selection,
         global_selection,
-        previous.corner_radius,
+        corner_radius,
         &[],
     )
-    .map_err(|error| format!("無法重複上次範圍；螢幕配置可能已變更：{error}"))
 }
 
 pub fn capture_monitor(app: AppHandle, device_name: &str) -> Result<SelectionSnapshot, String> {
@@ -1000,10 +1022,10 @@ fn crop_rgba(
         || rect.y < 0
         || rect.width <= 0
         || rect.height <= 0
-        || rect.x + rect.width > source_width
-        || rect.y + rect.height > source_height
+        || i64::from(rect.x) + i64::from(rect.width) > i64::from(source_width)
+        || i64::from(rect.y) + i64::from(rect.height) > i64::from(source_height)
     {
-        return Err("選取範圍超出 virtual desktop".into());
+        return Err("擷取範圍已超出目前螢幕，請重新框選。".into());
     }
     let expected = source_width as usize * source_height as usize * 4;
     if source.len() != expected {

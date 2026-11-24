@@ -87,8 +87,10 @@ pub struct HistoryEntry {
     pub created_at_unix_ms: u128,
     pub canvas_width: u32,
     pub canvas_height: u32,
-    pub selection: Option<serde_json::Value>,
+    pub selection: Option<crate::capture::RectInfo>,
     pub thumbnail_data_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range_thumbnail_data_url: Option<String>,
 }
 
 fn history_thumbnail(path: &Path) -> Option<String> {
@@ -206,12 +208,25 @@ pub fn auto_save_project(
     Ok(saved)
 }
 
+fn history_selection(metadata: &Path) -> Option<crate::capture::RectInfo> {
+    #[derive(Deserialize)]
+    struct CaptureMetadata {
+        selection: crate::capture::RectInfo,
+    }
+    let bytes = fs::read(metadata).ok()?;
+    let selection = serde_json::from_slice::<CaptureMetadata>(&bytes)
+        .ok()?
+        .selection;
+    (selection.width > 0 && selection.height > 0).then_some(selection)
+}
+
 pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
     let app_data = app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     let history_dir = app_data.join("history");
+    let capture_dir = app_data.join("poc-b");
     let mut entries = Vec::new();
     let Ok(files) = fs::read_dir(history_dir) else {
         return Ok(entries);
@@ -229,12 +244,26 @@ pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
         if !source.exists() {
             continue;
         }
-        let metadata = source.with_extension("json");
-        let selection = fs::read(&metadata)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-            .and_then(|value| value.get("selection").cloned());
+        // A crop replaces the project image; its history filename retains the original capture ID.
+        let original_capture = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".captureflow.json"))
+            .and_then(|stem| {
+                stem.strip_prefix("selection-")?.parse::<u128>().ok()?;
+                Some(capture_dir.join(format!("{stem}.png")))
+            });
+        let selection_image = original_capture
+            .as_deref()
+            .filter(|image| image.exists())
+            .unwrap_or(source);
+        let selection = history_selection(&selection_image.with_extension("json"));
         let thumbnail_data_url = history_thumbnail(source);
+        let range_thumbnail_data_url = if selection.is_some() && selection_image != source {
+            history_thumbnail(selection_image)
+        } else {
+            None
+        };
         entries.push(HistoryEntry {
             project_path: path.to_string_lossy().into_owned(),
             image_path: project.source_image,
@@ -243,6 +272,7 @@ pub fn list_history(app: &AppHandle) -> Result<Vec<HistoryEntry>, String> {
             canvas_height: project.canvas_height,
             selection,
             thumbnail_data_url,
+            range_thumbnail_data_url,
         });
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_unix_ms));

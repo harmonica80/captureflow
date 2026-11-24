@@ -46,9 +46,11 @@ type HistoryEntry = {
   createdAtUnixMs: number;
   canvasWidth: number;
   canvasHeight: number;
-  selection?: RectInfo;
+  selection: RectInfo | null;
   thumbnailDataUrl?: string;
+  rangeThumbnailDataUrl?: string;
 };
+type CaptureTarget = { kind: "area" } | { kind: "monitor"; deviceName: string } | { kind: "history"; selection: RectInfo };
 
 const RELEASES_URL = "https://github.com/harmonica80/captureflow/releases";
 const LATEST_RELEASE_API =
@@ -72,6 +74,10 @@ const copy = {
     title: "擷圖與標註工作區", theme: "色系主題", light: "淺色", dark: "深色",
     create: "建立擷圖", createHelp: "桌面模式只負責選取範圍；完成後會自動回到右側編輯器。",
     select: "框選螢幕範圍", selecting: "框選中…", openProject: "開啟 JSON 專案",
+    repeatArea: "重複歷史擷取範圍", repeating: "擷取中…",
+    repeatHelp: "點選縮圖，依原本的位置和大小擷取目前畫面。",
+    repeatEmpty: "尚無可重複擷取的範圍，請先完成一次螢幕擷取。",
+    repeatLoading: "正在載入歷史範圍…", repeatError: "無法載入歷史範圍，請關閉後重試。",
     history: "歷史擷圖記錄", captureItem: "擷圖", monitors: "擷取整個螢幕", screen: "螢幕", current: "目前圖片",
     preferences: "偏好設定", shortcut: "快捷鍵", globalShortcut: "全域框選快捷鍵", apply: "套用", reset: "預設",
     historyCount: "保留記錄數量", clearHistory: "清除歷史擷圖記錄", saveImage: "圖片儲存",
@@ -88,6 +94,10 @@ const copy = {
     title: "Screenshot & Annotation Workspace", theme: "Theme", light: "Light", dark: "Dark",
     create: "New Capture", createHelp: "Select on the desktop, then continue editing in this window.",
     select: "Select Screen Area", selecting: "Selecting…", openProject: "Open JSON Project",
+    repeatArea: "Repeat a Capture Area", repeating: "Capturing…",
+    repeatHelp: "Select a thumbnail to capture the same position and size on the current desktop.",
+    repeatEmpty: "No reusable areas yet. Capture the screen first.",
+    repeatLoading: "Loading capture areas…", repeatError: "Could not load capture areas. Close this dialog and try again.",
     history: "Capture History", captureItem: "Capture", monitors: "Capture Full Display", screen: "Display", current: "Current Image",
     preferences: "Preferences", shortcut: "Shortcut", globalShortcut: "Global capture shortcut", apply: "Apply", reset: "Default",
     historyCount: "History limit", clearHistory: "Clear capture history", saveImage: "Image Storage",
@@ -119,6 +129,9 @@ export default function App() {
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]),
     [history, setHistory] = useState<HistoryEntry[]>([]),
     [historyOpen, setHistoryOpen] = useState(false);
+  const repeatDialog = useRef<HTMLDialogElement>(null);
+  const repeatCancel = useRef<HTMLButtonElement>(null);
+  const [repeatStatus, setRepeatStatus] = useState<"loading" | "ready" | "error">("loading");
   const [settings, setSettings] = useState<SettingsView | null>(null),
     [shortcutDraft, setShortcutDraft] = useState(""),
     [historyLimitDraft, setHistoryLimitDraft] = useState(20),
@@ -155,9 +168,17 @@ export default function App() {
   async function refreshHistory() {
     try {
       setHistory(await invoke<HistoryEntry[]>("list_capture_history"));
+      return true;
     } catch (reason) {
       setError(String(reason));
+      return false;
     }
+  }
+  async function openRepeatDialog() {
+    setRepeatStatus("loading");
+    repeatDialog.current?.showModal();
+    repeatCancel.current?.focus();
+    setRepeatStatus(await refreshHistory() ? "ready" : "error");
   }
   function receiveSelection(captured: SelectionSnapshot) {
     setHistoryProjectPath(undefined);
@@ -235,6 +256,7 @@ export default function App() {
     const appWindow = getCurrentWindow();
     const listener = appWindow.onCloseRequested((event) => {
       event.preventDefault();
+      repeatDialog.current?.close();
       setClosePrompt(true);
     });
     return () => { void listener.then((unlisten) => unlisten()); };
@@ -282,30 +304,36 @@ export default function App() {
       setError(String(reason));
     }
   }
-  async function runCapture(kind: "area" | "monitor", deviceName?: string) {
+  async function runCapture(target: CaptureTarget) {
     return withSavedEditor(async () => {
-      setBusy(kind === "monitor" ? (deviceName ?? "monitor") : kind);
+      const { kind } = target;
+      const hideWindow = kind !== "monitor";
+      const appWindow = getCurrentWindow();
+      setBusy(kind === "monitor" ? target.deviceName : kind);
       setError("");
       try {
-        const appWindow = getCurrentWindow();
-        if (kind === "area") {
+        if (hideWindow) {
           await appWindow.minimize();
           await new Promise((resolve) => window.setTimeout(resolve, 250));
         }
         const result =
           kind === "area"
             ? await invoke<SelectionSnapshot | null>("select_screen_area")
-            : await invoke<SelectionSnapshot>("capture_monitor", { deviceName });
+            : kind === "history"
+              ? await invoke<SelectionSnapshot>("repeat_history_selection", { selection: target.selection })
+              : await invoke<SelectionSnapshot>("capture_monitor", { deviceName: target.deviceName });
         if (result) receiveSelection(result);
       } catch (reason) {
         setError(String(reason));
       } finally {
-        if (kind === "area") {
-          const appWindow = getCurrentWindow();
-          await appWindow.unminimize();
-          await appWindow.setFocus();
+        try {
+          if (hideWindow) {
+            await appWindow.unminimize();
+            await appWindow.setFocus();
+          }
+        } finally {
+          setBusy("");
         }
-        setBusy("");
       }
     });
   }
@@ -438,6 +466,7 @@ export default function App() {
     catch (reason) { setError(String(reason)); }
   }
 
+  const repeatableHistory = history.filter((item) => item.selection);
   return (
     <main className={`app-shell workspace-shell theme-${theme}`}>
       <header className="app-header">
@@ -457,10 +486,19 @@ export default function App() {
             <p>{t.createHelp}</p>
             <button
               className="capture-button primary"
-              onClick={() => runCapture("area")}
+              onClick={() => runCapture({ kind: "area" })}
               disabled={!!busy}
             >
               {busy === "area" ? t.selecting : t.select}
+            </button>
+            <button
+              type="button"
+              className="capture-button repeat-area-button"
+              aria-haspopup="dialog"
+              onClick={() => void openRepeatDialog()}
+              disabled={!!busy}
+            >
+              {busy === "history" ? t.repeating : t.repeatArea}
             </button>
             <button
               className="capture-button"
@@ -524,7 +562,7 @@ export default function App() {
               {monitors.map((monitor, index) => (
                 <button
                   key={monitor.deviceName}
-                  onClick={() => runCapture("monitor", monitor.deviceName)}
+                  onClick={() => runCapture({ kind: "monitor", deviceName: monitor.deviceName })}
                   disabled={!!busy}
                   title={monitor.deviceName}
                 >
@@ -639,7 +677,7 @@ export default function App() {
               <p>{t.emptyHelp}</p>
               <button
                 className="capture-button primary"
-                onClick={() => runCapture("area")}
+                onClick={() => runCapture({ kind: "area" })}
               >
                 {t.start}
               </button>
@@ -699,6 +737,42 @@ export default function App() {
           </span>
         </div>
       </footer>
+      <dialog
+        ref={repeatDialog}
+        className="close-dialog repeat-area-dialog"
+        aria-labelledby="repeat-area-title"
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        <h2 id="repeat-area-title">{t.repeatArea}</h2>
+        <p>{t.repeatHelp}</p>
+        {repeatStatus === "loading" ? <p role="status">{t.repeatLoading}</p>
+          : repeatStatus === "error" ? <p role="alert">{t.repeatError}</p>
+            : repeatableHistory.length === 0 ? <p role="status">{t.repeatEmpty}</p>
+              : <div className="repeat-area-grid">
+                {repeatableHistory.map((item) => {
+                  const range = item.selection;
+                  if (!range) return null;
+                  const thumbnail = item.rangeThumbnailDataUrl ?? item.thumbnailDataUrl;
+                  const capturedAt = new Date(item.createdAtUnixMs);
+                  return <button
+                    key={item.projectPath}
+                    type="button"
+                    className="capture-button repeat-area-card"
+                    onClick={() => {
+                      repeatDialog.current?.close();
+                      void runCapture({ kind: "history", selection: range });
+                    }}
+                  >
+                    {thumbnail ? <img src={thumbnail} alt="" loading="lazy" />
+                      : <span className="history-thumbnail-placeholder" aria-hidden="true">▧</span>}
+                    <strong>{range.width} × {range.height} px</strong>
+                    <span>X {range.x} · Y {range.y}</span>
+                    <time dateTime={capturedAt.toISOString()}>{capturedAt.toLocaleString(language)}</time>
+                  </button>;
+                })}
+              </div>}
+        <button ref={repeatCancel} type="button" className="capture-button repeat-area-cancel" onClick={() => repeatDialog.current?.close()}>{t.cancel}</button>
+      </dialog>
       {closePrompt && (
         <div className="close-dialog-backdrop" role="presentation">
           <section className="close-dialog" role="dialog" aria-modal="true" aria-labelledby="close-dialog-title">

@@ -513,6 +513,8 @@ export default function AnnotationEditor({
     height: number;
   } | null>(null);
   const [zoom, setZoom] = useState(100);
+  // Keep crop controls at 12 CSS pixels even when the image is zoomed out.
+  const cropHandleSize = 12 / (zoom / 100);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const [minimapOpen, setMinimapOpen] = useState(false);
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 100, height: 100 });
@@ -2125,6 +2127,7 @@ export default function AnnotationEditor({
                   />
                   <rect
                     className="crop-frame"
+                    vectorEffect="non-scaling-stroke"
                     x={cropPreview.x}
                     y={cropPreview.y}
                     width={cropPreview.width}
@@ -2161,10 +2164,11 @@ export default function AnnotationEditor({
                       <rect
                         key={handle}
                         className={`crop-handle crop-handle-${handle}`}
-                        x={x - 5}
-                        y={y - 5}
-                        width={10}
-                        height={10}
+                        x={x - cropHandleSize / 2}
+                        y={y - cropHandleSize / 2}
+                        width={cropHandleSize}
+                        height={cropHandleSize}
+                        vectorEffect="non-scaling-stroke"
                         onPointerDown={(event) => cropHandleDown(event, handle)}
                       />
                     ))}

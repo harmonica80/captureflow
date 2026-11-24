@@ -35,6 +35,16 @@ async fn repeat_last_selection(
 }
 
 #[tauri::command]
+async fn repeat_history_selection(
+    app: tauri::AppHandle,
+    selection: capture::RectInfo,
+) -> Result<selector::SelectionSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || selector::repeat_history_area(app, selection))
+        .await
+        .map_err(|error| format!("重複擷取執行緒異常結束：{error}"))?
+}
+
+#[tauri::command]
 async fn capture_monitor(
     app: tauri::AppHandle,
     device_name: String,
@@ -305,6 +315,7 @@ pub fn run() {
             list_monitors,
             select_screen_area,
             repeat_last_selection,
+            repeat_history_selection,
             capture_monitor,
             open_sticker,
             export_selection,

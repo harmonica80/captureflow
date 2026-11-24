@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
     const listeners = new Map();
     const images = new Map([["capture.png", { width: 600, height: 400 }]]);
     const resources = new Map();
-    w.qa = { calls: [], saved: [], history: [], failSave: false, confirm: false, saveDelay: 0, activeWrites: 0, maxWrites: 0 };
+    w.qa = { calls: [], saved: [], history: [], failSave: false, failRepeat: false, confirm: false, saveDelay: 0, activeWrites: 0, maxWrites: 0 };
     localStorage.setItem("captureflow-update-check", String(Date.now()));
     w.qa.emit = (event: string, payload?: unknown) => {
       for (const [key, value] of listeners) if (value.event === event) callbacks.get(value.handler)?.({ event, id: key, payload });
@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
       invoke: async (command: string, args: any = {}) => {
         w.qa.calls.push({ command, args });
         switch (command) {
-          case "plugin:app|version": return "0.5.13";
+          case "plugin:app|version": return "0.5.14";
           case "get_settings": return { captureShortcut: "Alt+Shift+A", historyLimit: 20, language: "zh-TW", defaultSaveDirectory: "", launchAtStartup: false };
           case "list_monitors": return [{ deviceName: "DISPLAY1" }];
           case "list_capture_history": return w.qa.history;
@@ -33,6 +33,12 @@ test.beforeEach(async ({ page }) => {
           case "plugin:event|unlisten": return;
           case "capture_monitor":
           case "select_screen_area": return { imagePath: "capture.png", metadataPath: "capture.json", width: 600, height: 400, selection: { x: -600, y: 0, width: 600, height: 400 } };
+          case "repeat_history_selection": {
+            if (w.qa.failRepeat) throw new Error("擷取範圍已超出目前螢幕，請重新框選。");
+            const { width, height } = args.selection;
+            images.set("repeat.png", { width, height });
+            return { imagePath: "repeat.png", metadataPath: "repeat.json", width, height, selection: args.selection };
+          }
           case "plugin:image|from_path": resources.set(++id, images.get(args.path)); return id;
           case "plugin:image|rgba": {
             const size = resources.get(args.rid);
@@ -220,6 +226,57 @@ test("global capture replacement flushes the previous document", async ({ page }
   expect(await page.evaluate(() => (window as any).qa.saved.some((s: any) => s.objects.length === 1))).toBe(true);
 });
 
+const savedRange = { x: -300, y: 40, width: 250, height: 150 };
+
+async function seedRepeatHistory(page: Page) {
+  await page.evaluate((selection) => {
+    const entry = { imagePath: "capture.png", canvasWidth: 600, canvasHeight: 400, createdAtUnixMs: Date.now() };
+    const canvas = document.createElement("canvas");
+    canvas.width = 50;
+    canvas.height = 30;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#087346";
+    ctx.fillRect(0, 0, 50, 30);
+    (window as any).qa.history = [
+      { ...entry, projectPath: "range.json", selection, rangeThumbnailDataUrl: canvas.toDataURL() },
+      { ...entry, projectPath: "imported.json", selection: null },
+    ];
+  }, savedRange);
+}
+
+test("history picker cancels, forwards desktop coordinates, and preserves the editor on failure", async ({ page }) => {
+  await draw(page);
+  const trigger = page.getByRole("button", { name: "重複歷史擷取範圍" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "重複歷史擷取範圍" });
+  await expect(dialog.getByRole("status")).toHaveText("尚無可重複擷取的範圍，請先完成一次螢幕擷取。");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await seedRepeatHistory(page);
+  await page.evaluate(() => { (window as any).qa.failRepeat = true; });
+  await trigger.click();
+  const tile = dialog.getByRole("button", { name: /250 × 150 px.*X -300 · Y 40/ });
+  await expect(dialog.locator(".repeat-area-card")).toHaveCount(1);
+  await expect(tile.locator("img")).toBeVisible();
+  await dialog.screenshot({ path: "../qa-artifacts/history-repeat-preview.png" });
+  await tile.click();
+  await expect(page.getByRole("alert")).toContainText("擷取範圍已超出目前螢幕");
+  await expect(page.locator("[data-object-id]")).toHaveCount(1);
+  await page.evaluate(() => { (window as any).qa.failRepeat = false; });
+  await trigger.click();
+  await tile.click();
+  await expect(page.locator(".annotation-stage canvas").first()).toHaveAttribute("width", "250");
+  await expect(page.locator("[data-object-id]")).toHaveCount(0);
+  const calls = await page.evaluate(() => (window as any).qa.calls as { command: string; args: unknown }[]);
+  const repeat = calls.findIndex(({ command }) => command === "repeat_history_selection");
+  expect(calls[repeat].args).toEqual({ selection: savedRange });
+  expect(calls[repeat - 1].command).toBe("plugin:window|minimize");
+  expect(calls[repeat + 1].command).toBe("plugin:window|unminimize");
+  expect(calls.slice(0, repeat).some(({ command }) => command === "auto_save_annotation_project")).toBe(true);
+  expect(calls.some(({ command }) => command === "load_annotation_project_from")).toBe(false);
+});
+
 test("visible interface text meets 4.5:1 in light/dark normal, hover, selected, disabled and error states", async ({ page }) => {
   async function check() {
     const failures = await page.evaluate(() => {
@@ -258,6 +315,25 @@ test("visible interface text meets 4.5:1 in light/dark normal, hover, selected, 
     await check();
     await page.getByRole("button", { name: "文字", exact: true }).click();
     await check();
+    const repeat = page.getByRole("button", { name: "重複歷史擷取範圍" });
+    await repeat.hover();
+    await check();
+    await repeat.click();
+    const picker = page.getByRole("dialog", { name: "重複歷史擷取範圍" });
+    await expect(picker.getByText("尚無可重複擷取的範圍", { exact: false })).toBeVisible();
+    await check();
+    await page.keyboard.press("Escape");
+    await seedRepeatHistory(page);
+    await repeat.click();
+    const card = picker.locator(".repeat-area-card");
+    await card.hover();
+    await check();
+    await page.mouse.down();
+    await check();
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { (window as any).qa.history = []; });
   }
   await page.evaluate(() => { (window as any).qa.failSave = true; });
   await draw(page);

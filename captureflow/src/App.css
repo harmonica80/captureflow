@@ -149,10 +149,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .text-resize-nw, .text-resize-se { cursor: nwse-resize; }
 .text-resize-ne, .text-resize-sw { cursor: nesw-resize; }
 .inline-text-input { position: absolute; z-index: 3; min-width: 1ch; max-width: calc(100% - 8px); padding: 0; border: 0; outline: 0; color: inherit; background: transparent; line-height: 1.15; }
-.crop-frame { fill: none; stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 1px #000); }
+.crop-frame { fill: none; stroke: #74e7ad; stroke-width: 3; filter: drop-shadow(0 0 1px #000); }
 .crop-grid line { stroke: #fff; stroke-width: 1; opacity: .72; }
 .crop-overlay > path, .crop-frame, .crop-grid { pointer-events: none; }
-.crop-handle { fill: #fff; stroke: #1769aa; stroke-width: 2; }
+.crop-handle { fill: #fff; stroke: #17251e; stroke-width: 1; }
 .crop-handle-nw, .crop-handle-se { cursor: nwse-resize; }
 .crop-handle-ne, .crop-handle-sw { cursor: nesw-resize; }
 .crop-handle-n, .crop-handle-s { cursor: ns-resize; }
@@ -196,6 +196,17 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .close-dialog-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 20px; }
 .theme-light .close-dialog { border-color: #7e9589; color: #17251e; background: #fff; }
 .theme-light .close-dialog p { color: #35483f; }
+.repeat-area-dialog { width: min(720px, calc(100vw - 40px)); max-height: calc(100vh - 40px); }
+.repeat-area-dialog::backdrop { background: #0009; }
+.repeat-area-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.capture-button.repeat-area-card { display: grid; align-content: start; gap: 4px; margin: 0; text-align: left; }
+.repeat-area-card img, .repeat-area-card .history-thumbnail-placeholder { width: 100%; height: 96px; object-fit: contain; background: #26332e; border-radius: 6px; }
+.repeat-area-card time, .repeat-area-card span:not(.history-thumbnail-placeholder) { font-size: 13px; font-weight: 400; }
+.repeat-area-cancel { width: auto; }
+.repeat-area-dialog button:active:not(:disabled), .repeat-area-button:active:not(:disabled) { border-color: currentColor; }
+.theme-light button:is(.repeat-area-card, .repeat-area-button, .repeat-area-cancel):hover:not(:disabled) { background: #e3eee8; }
+.theme-light .repeat-area-dialog button:focus-visible, .theme-light .repeat-area-button:focus-visible { outline-color: #1769aa; }
+.theme-light .repeat-area-card .history-thumbnail-placeholder { background: #e3e9e6; }
 .theme-light .sidebar-notice { color: #173426; background: #d9f3e5; }
 .theme-light .sidebar-notice strong { color: #075f3b; }
 .theme-light .annotation-stage, .theme-light .annotation-scroll { background: #dfe5e2; }
