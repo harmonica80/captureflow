@@ -11,4 +11,11 @@
 - TypeScript／Vite 正式建置、Rust 格式檢查及 11 項 Playwright 回歸測試通過，涵蓋座標傳遞、取消及擷取失敗後保留圖片。
 - 瀏覽器驗證 50%、100%、200% 縮放：8 個控制點均維持 12 × 12 CSS 像素，邊線維持 3 CSS 像素。8 個方向均能從放大後的控制點邊緣拖曳調整範圍。
 - 未新增文字或修改文字色彩；既有淺色／深色介面一般、hover、selected、disabled、error 狀態文字對比測試通過，門檻為 4.5:1。
-- 尚待 GitHub Actions Windows 建置、portable EXE 實機驗證與公開下載雜湊核對；目前沒有本版 EXE 或發布連結。
+- Windows 免安裝版實測確認：裁切過的歷史項目顯示原始範圍縮圖，重新擷取的 360 × 240 PNG 與目前合成畫面逐像素一致。50%、100%、200% 縮放下均維持 12 像素控制點與 3 像素綠框，八個方向皆可拖曳。
+
+## 測試版下載
+
+- [Windows 免安裝測試版 ZIP](https://github.com/harmonica80/captureflow/actions/runs/45306241823/artifacts/14881526294) · [GitHub Actions 建置紀錄](https://github.com/harmonica80/captureflow/actions/runs/45306241823)
+- GitHub 下載需要登入，成品保存至 2027 年 2 月 22 日 09:36（臺灣時間）。
+- ZIP 內為 `CaptureFlow-portable.exe`，版本 0.5.14，來源提交 `be819bb`，大小 6,633,984 bytes。
+- EXE 的 SHA-256 為 `2342591A63AA2487993E67E68A06760257A4712333FAE7CEABE4283C4750DC7B`，已與 Actions 紀錄核對。
