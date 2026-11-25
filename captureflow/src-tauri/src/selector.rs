@@ -1635,6 +1635,33 @@ mod platform {
             }
         }
 
+        fn edit_backspace(&mut self) {
+            if let Some(input) = self.number_input.as_mut() {
+                if input.replace_on_type {
+                    input.digits.clear();
+                } else {
+                    input.digits.pop();
+                }
+                input.replace_on_type = false;
+            } else if let Some(input) = self.text_input.as_mut() {
+                if input.replace_on_type {
+                    input.buffer.clear();
+                } else if input
+                    .buffer
+                    .pop()
+                    .is_some_and(|last| (0xDC00..=0xDFFF).contains(&last))
+                    && input
+                        .buffer
+                        .last()
+                        .is_some_and(|last| (0xD800..=0xDBFF).contains(last))
+                {
+                    input.buffer.pop();
+                }
+                input.replace_on_type = false;
+                self.caret_visible = true;
+            }
+        }
+
         fn commit_value(&mut self) {
             commit_text_input(self);
             if let Some(input) = self.number_input.take() {
@@ -1906,7 +1933,10 @@ mod platform {
             if status.0 <= 0 {
                 break;
             }
-            TranslateMessage(&message);
+            // Backspace is handled on key-down. Do not generate a second WM_CHAR.
+            if message.message != WM_KEYDOWN || message.wParam.0 as u16 != VK_BACK.0 {
+                TranslateMessage(&message);
+            }
             DispatchMessageW(&message);
         }
         Ok(())
@@ -2489,15 +2519,13 @@ mod platform {
                             InvalidateRect(Some(hwnd), None, false);
                             return LRESULT(0);
                         }
+                        if character == VK_BACK.0 {
+                            state.edit_backspace();
+                            InvalidateRect(Some(hwnd), None, false);
+                            return LRESULT(0);
+                        }
                         if let Some(input) = state.number_input.as_mut() {
-                            if character == VK_BACK.0 {
-                                if input.replace_on_type {
-                                    input.digits.clear();
-                                } else {
-                                    input.digits.pop();
-                                }
-                                input.replace_on_type = false;
-                            } else if (48..=57).contains(&character) {
+                            if (48..=57).contains(&character) {
                                 let mut candidate = if input.replace_on_type {
                                     String::new()
                                 } else {
@@ -2513,22 +2541,7 @@ mod platform {
                             return LRESULT(0);
                         }
                         if let Some(input) = state.text_input.as_mut() {
-                            if character == VK_BACK.0 {
-                                if input.replace_on_type {
-                                    input.buffer.clear();
-                                } else if input
-                                    .buffer
-                                    .pop()
-                                    .is_some_and(|last| (0xDC00..=0xDFFF).contains(&last))
-                                    && input
-                                        .buffer
-                                        .last()
-                                        .is_some_and(|last| (0xD800..=0xDBFF).contains(last))
-                                {
-                                    input.buffer.pop();
-                                }
-                                input.replace_on_type = false;
-                            } else if character >= 0x20 {
+                            if character >= 0x20 {
                                 if input.replace_on_type {
                                     input.buffer.clear();
                                 }
@@ -2544,6 +2557,15 @@ mod platform {
                     }
                 }
                 DefWindowProcW(hwnd, message, wparam, lparam)
+            }
+            WM_KEYDOWN if wparam.0 as u16 == VK_BACK.0 => {
+                if let Ok(mut guard) = STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        state.edit_backspace();
+                        InvalidateRect(Some(hwnd), None, false);
+                    }
+                }
+                LRESULT(0)
             }
             WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
                 if let Ok(mut guard) = STATE.lock() {
