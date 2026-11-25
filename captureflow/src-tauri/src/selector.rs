@@ -1504,7 +1504,6 @@ mod platform {
         Cancel,
         Pin,
         Tool(AnnotationTool),
-        Range,
         Color,
         Thinner,
         Thickness,
@@ -1529,17 +1528,14 @@ mod platform {
         ToolbarButton::Tool(AnnotationTool::Number),
         ToolbarButton::Tool(AnnotationTool::Mosaic),
         ToolbarButton::Tool(AnnotationTool::Eraser),
-        ToolbarButton::Range,
         ToolbarButton::Color,
-        ToolbarButton::Thinner,
         ToolbarButton::Thickness,
-        ToolbarButton::Thicker,
         ToolbarButton::Style,
         ToolbarButton::Undo,
         ToolbarButton::Redo,
         ToolbarButton::Delete,
     ];
-    const TOOLBAR_COLOR_INDEX: usize = 14;
+    const TOOLBAR_COLOR_INDEX: usize = 13;
     const CAPTURE_BUTTON_COUNT: usize = 4;
     const TOOL_SIZE: i32 = 44;
 
@@ -2063,12 +2059,6 @@ mod platform {
                                             };
                                         state.selected_annotation = None;
                                     }
-                                    ToolbarButton::Range => {
-                                        state.commit_value();
-                                        state.annotation_tool = None;
-                                        state.selected_annotation = None;
-                                        state.hovered_annotation = None;
-                                    }
                                     ToolbarButton::Color => {
                                         state.color_palette_open = !state.color_palette_open;
                                     }
@@ -2146,7 +2136,7 @@ mod platform {
                                 InvalidateRect(Some(hwnd), None, false);
                                 return LRESULT(0);
                             }
-                            if state.annotation_tool.is_none() {
+                            {
                                 let interaction = if let Some(handle) = hit_handle(point, selection)
                                 {
                                     Some(Interaction::Resize {
@@ -2154,15 +2144,9 @@ mod platform {
                                         start: point,
                                         original: selection,
                                     })
-                                } else if point_in_rect(
-                                    point,
-                                    RECT {
-                                        left: selection.x,
-                                        top: selection.y,
-                                        right: selection.x + selection.width,
-                                        bottom: selection.y + selection.height,
-                                    },
-                                ) || hit_selection_edge(point, selection)
+                                } else if hit_selection_edge(point, selection)
+                                    || (state.annotation_tool.is_none()
+                                        && clamp_to_rect(point, selection) == point)
                                 {
                                     Some(Interaction::MoveSelection {
                                         start: point,
@@ -2285,26 +2269,7 @@ mod platform {
                                 }
                             }
                         }
-                        if let Some((handle, original)) = state
-                            .selection
-                            .and_then(|rect| hit_handle(point, rect).map(|handle| (handle, rect)))
-                        {
-                            state.long_capture = None;
-                            state.interaction = Some(Interaction::Resize {
-                                handle,
-                                start: point,
-                                original,
-                            });
-                        } else if let Some(original) = state
-                            .selection
-                            .filter(|rect| hit_selection_edge(point, *rect))
-                        {
-                            state.long_capture = None;
-                            state.interaction = Some(Interaction::MoveSelection {
-                                start: point,
-                                original,
-                            });
-                        } else if state.selection.is_none() {
+                        if state.selection.is_none() {
                             if let Some(candidate) = state.hover_candidate {
                                 state.interaction = Some(Interaction::PendingWindow {
                                     start: point,
@@ -3492,10 +3457,18 @@ mod platform {
         }
         let column = (point.0 - layout.bounds.left) / TOOL_SIZE;
         let row = (point.1 - layout.bounds.top) / TOOL_SIZE;
-        state
-            .toolbar_buttons()
-            .get((row * layout.columns + column) as usize)
-            .copied()
+        let index = (row * layout.columns + column) as usize;
+        let button = state.toolbar_buttons().get(index).copied()?;
+        if matches!(button, ToolbarButton::Thickness) {
+            let (_, up, down) = thickness_bounds(layout.button(index));
+            if point_in_rect(point, up) {
+                return Some(ToolbarButton::Thicker);
+            }
+            if point_in_rect(point, down) {
+                return Some(ToolbarButton::Thinner);
+            }
+        }
+        Some(button)
     }
 
     unsafe fn draw_edit_hint(dc: HDC, state: &SelectorState) {
@@ -3605,10 +3578,9 @@ mod platform {
             ),
             ToolbarButton::Tool(AnnotationTool::Mosaic) => ("馬賽克", "Mosaic"),
             ToolbarButton::Tool(AnnotationTool::Eraser) => ("橡皮擦", "Eraser"),
-            ToolbarButton::Range => ("移動或調整擷取範圍", "Move or resize capture area"),
             ToolbarButton::Color => ("選擇顏色", "Choose color"),
             ToolbarButton::Thinner => ("縮小筆寬或字級", "Decrease width or size"),
-            ToolbarButton::Thickness => ("筆寬或大小", "Width or size"),
+            ToolbarButton::Thickness => ("粗細／大小", "Stroke width or size"),
             ToolbarButton::Thicker => ("增加筆寬或字級", "Increase width or size"),
             ToolbarButton::Style => match state.line_style {
                 LineStyle::Solid => ("實線 · 點按切換", "Solid · Click to cycle"),
@@ -3735,6 +3707,127 @@ mod platform {
         DeleteObject(background.into());
     }
 
+    fn thickness_bounds(cell: RECT) -> (RECT, RECT, RECT) {
+        let field = RECT {
+            left: cell.left + 1,
+            top: cell.top + 6,
+            right: cell.right - 1,
+            bottom: cell.bottom - 6,
+        };
+        let split_x = field.right - 15;
+        let split_y = (field.top + field.bottom) / 2;
+        let up = RECT {
+            left: split_x,
+            top: field.top + 1,
+            right: field.right - 1,
+            bottom: split_y,
+        };
+        let down = RECT {
+            left: split_x,
+            top: split_y,
+            right: field.right - 1,
+            bottom: field.bottom - 1,
+        };
+        (field, up, down)
+    }
+
+    unsafe fn draw_thickness_spinner(dc: HDC, cell: RECT, state: &SelectorState) {
+        let (field, up, down) = thickness_bounds(cell);
+        let border = CreateSolidBrush(COLORREF(0x0082_7570));
+        FillRect(dc, &field, border);
+        let value = RECT {
+            left: field.left + 1,
+            top: field.top + 1,
+            right: up.left,
+            bottom: field.bottom - 1,
+        };
+        let paper = CreateSolidBrush(COLORREF(0x00FF_FFFF));
+        FillRect(dc, &value, paper);
+        DeleteObject(paper.into());
+
+        for (arrow, direction) in [(up, -1), (down, 1)] {
+            let background =
+                CreateSolidBrush(COLORREF(if point_in_rect(state.cursor_position, arrow) {
+                    0x00E6_ED_E0
+                } else {
+                    0x00F1_F4_F2
+                }));
+            FillRect(dc, &arrow, background);
+            DeleteObject(background.into());
+            let x = (arrow.left + arrow.right) / 2;
+            let y = (arrow.top + arrow.bottom) / 2;
+            let glyph = [
+                POINT {
+                    x: x - 4,
+                    y: y - direction * 2,
+                },
+                POINT {
+                    x: x + 4,
+                    y: y - direction * 2,
+                },
+                POINT {
+                    x,
+                    y: y + direction * 3,
+                },
+            ];
+            let ink = CreateSolidBrush(COLORREF(0x0025_2525));
+            let old_brush = SelectObject(dc, ink.into());
+            let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+            Polygon(dc, &glyph);
+            SelectObject(dc, old_pen);
+            SelectObject(dc, old_brush);
+            DeleteObject(ink.into());
+        }
+        FillRect(
+            dc,
+            &RECT {
+                right: up.left + 1,
+                ..up
+            },
+            border,
+        );
+        FillRect(
+            dc,
+            &RECT {
+                top: down.top,
+                bottom: down.top + 1,
+                ..down
+            },
+            border,
+        );
+        FillRect(
+            dc,
+            &RECT {
+                right: down.left + 1,
+                ..down
+            },
+            border,
+        );
+        DeleteObject(border.into());
+
+        let width = state
+            .text_input
+            .as_ref()
+            .map(|input| input.font_size)
+            .or_else(|| {
+                state
+                    .selected_annotation
+                    .map(|index| native_thickness(state.annotations[index]))
+            })
+            .unwrap_or_else(|| state.tool_thickness());
+        let text: Vec<u16> = width.to_string().encode_utf16().collect();
+        let mut extent = SIZE::default();
+        GetTextExtentPoint32W(dc, &text, &mut extent);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, COLORREF(0x0025_2525));
+        TextOutW(
+            dc,
+            value.left + ((value.right - value.left - extent.cx) / 2).max(0),
+            value.top + ((value.bottom - value.top - extent.cy) / 2).max(0),
+            &text,
+        );
+    }
+
     unsafe fn draw_annotation_toolbar(
         dc: windows::Win32::Graphics::Gdi::HDC,
         state: &SelectorState,
@@ -3766,11 +3859,13 @@ mod platform {
                     state.annotation_tool == Some(tool),
                     true,
                 ),
-                ToolbarButton::Range => (15, state.annotation_tool.is_none(), true),
                 ToolbarButton::Color => (8, state.color_palette_open, true),
-                ToolbarButton::Thinner => (16, false, true),
-                ToolbarButton::Thickness => (usize::MAX, false, false),
-                ToolbarButton::Thicker => (17, false, true),
+                ToolbarButton::Thickness => {
+                    draw_thickness_spinner(dc, bounds, state);
+                    continue;
+                }
+                // These actions are the two halves of the spinner, never separate cells.
+                ToolbarButton::Thicker | ToolbarButton::Thinner => continue,
                 ToolbarButton::Style => (18, false, true),
                 ToolbarButton::Undo => (
                     9,
@@ -3781,27 +3876,6 @@ mod platform {
                 ToolbarButton::Delete => (20, false, state.selected_annotation.is_some()),
             };
             draw_toolbar_icon(dc, icon, bounds.left, bounds.top, state, selected, enabled);
-            if matches!(button, ToolbarButton::Thickness) {
-                let width = state
-                    .text_input
-                    .as_ref()
-                    .map(|input| input.font_size)
-                    .or_else(|| {
-                        state
-                            .selected_annotation
-                            .map(|index| native_thickness(state.annotations[index]))
-                    })
-                    .unwrap_or_else(|| state.tool_thickness());
-                let text: Vec<u16> = width.to_string().encode_utf16().collect();
-                SetBkMode(dc, TRANSPARENT);
-                SetTextColor(dc, COLORREF(0x0025_2525));
-                TextOutW(
-                    dc,
-                    bounds.left + (TOOL_SIZE - text.len() as i32 * 8) / 2,
-                    bounds.top + 14,
-                    &text,
-                );
-            }
         }
         if state.long_capture.is_none() {
             let first_annotation = layout.button(CAPTURE_BUTTON_COUNT);
@@ -3916,9 +3990,6 @@ mod platform {
         selected: bool,
         enabled: bool,
     ) {
-        if index == usize::MAX {
-            return;
-        }
         let bounds = RectInfo {
             x: left,
             y: top,
@@ -4126,22 +4197,6 @@ mod platform {
             14 => {
                 path.move_to(13.0, 31.0);
                 path.line_to(31.0, 13.0);
-            }
-            15 => {
-                path.move_to(17.0, 11.0);
-                path.line_to(17.0, 27.0);
-                path.line_to(33.0, 27.0);
-                path.move_to(11.0, 17.0);
-                path.line_to(27.0, 17.0);
-                path.line_to(27.0, 33.0);
-            }
-            16 | 17 => {
-                path.move_to(15.0, 22.0);
-                path.line_to(29.0, 22.0);
-                if index == 17 {
-                    path.move_to(22.0, 15.0);
-                    path.line_to(22.0, 29.0);
-                }
             }
             18 => {
                 path.move_to(10.0, 22.0);
@@ -5043,6 +5098,19 @@ mod platform {
             {
                 return IDC_ARROW;
             }
+            if let Some(handle) = hit_handle(point, selection) {
+                return match handle {
+                    Handle::Top | Handle::Bottom => IDC_SIZENS,
+                    Handle::Left | Handle::Right => IDC_SIZEWE,
+                    Handle::TopLeft | Handle::BottomRight => IDC_SIZENWSE,
+                    Handle::TopRight | Handle::BottomLeft => IDC_SIZENESW,
+                };
+            }
+            if hit_selection_edge(point, selection)
+                || (state.annotation_tool.is_none() && clamp_to_rect(point, selection) == point)
+            {
+                return IDC_SIZEALL;
+            }
         }
         if let Some((_, handle)) = hit_native_annotation_handle(point, &state.annotations) {
             return match handle {
@@ -5054,19 +5122,6 @@ mod platform {
         }
         if hit_native_annotation(point, &state.annotations).is_some() {
             return IDC_SIZEALL;
-        }
-        if let Some(rect) = state.selection {
-            if let Some(handle) = hit_handle(point, rect) {
-                return match handle {
-                    Handle::Top | Handle::Bottom => IDC_SIZENS,
-                    Handle::Left | Handle::Right => IDC_SIZEWE,
-                    Handle::TopLeft | Handle::BottomRight => IDC_SIZENWSE,
-                    Handle::TopRight | Handle::BottomLeft => IDC_SIZENESW,
-                };
-            }
-            if hit_selection_edge(point, rect) {
-                return IDC_SIZEALL;
-            }
         }
         if matches!(state.annotation_tool, Some(AnnotationTool::Text)) {
             IDC_IBEAM
