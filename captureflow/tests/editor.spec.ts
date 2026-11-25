@@ -114,6 +114,7 @@ test("crop undo/redo restores source, latest annotations and preceding edit hist
   await expect(page.locator(".current-image-card strong")).toHaveText(cropped);
   await expect(page.locator("[data-object-id]")).toHaveCount(1);
   await page.getByRole("button", { name: "關閉圖片", exact: true }).click();
+  await expect(page.locator(".annotation-editor")).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).qa.saved.at(-1).historyImagePath)).toBe("capture.png");
   await page.evaluate(() => {
     const qa = (window as any).qa, saved = qa.saved.at(-1);
@@ -124,6 +125,7 @@ test("crop undo/redo restores source, latest annotations and preceding edit hist
   await page.locator(".history-entry").click();
   await expect(page.locator("[data-object-id]")).toHaveCount(1);
   await page.getByRole("button", { name: "關閉圖片", exact: true }).click();
+  await expect(page.locator(".annotation-editor")).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).qa.saved.at(-1).historyProjectPath)).toBe("history/capture.captureflow.json");
 });
 
