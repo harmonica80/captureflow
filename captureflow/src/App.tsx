@@ -75,7 +75,7 @@ const copy = {
     create: "建立擷圖", createHelp: "桌面模式只負責選取範圍；完成後會自動回到右側編輯器。",
     select: "框選螢幕範圍", selecting: "框選中…", openProject: "開啟 JSON 專案",
     repeatArea: "重複歷史擷取範圍", repeating: "擷取中…",
-    repeatHelp: "點選縮圖，依原本的位置和大小擷取目前畫面。",
+    repeatHelp: "點選縮圖以顯示原本的框選範圍，調整後再確認擷取。",
     repeatEmpty: "尚無可重複擷取的範圍，請先完成一次螢幕擷取。",
     repeatLoading: "正在載入歷史範圍…", repeatError: "無法載入歷史範圍，請關閉後重試。",
     history: "歷史擷圖記錄", captureItem: "擷圖", monitors: "擷取整個螢幕", screen: "螢幕", current: "目前圖片",
@@ -95,7 +95,7 @@ const copy = {
     create: "New Capture", createHelp: "Select on the desktop, then continue editing in this window.",
     select: "Select Screen Area", selecting: "Selecting…", openProject: "Open JSON Project",
     repeatArea: "Repeat a Capture Area", repeating: "Capturing…",
-    repeatHelp: "Select a thumbnail to capture the same position and size on the current desktop.",
+    repeatHelp: "Select a thumbnail to show its original area. Adjust it before confirming the capture.",
     repeatEmpty: "No reusable areas yet. Capture the screen first.",
     repeatLoading: "Loading capture areas…", repeatError: "Could not load capture areas. Close this dialog and try again.",
     history: "Capture History", captureItem: "Capture", monitors: "Capture Full Display", screen: "Display", current: "Current Image",
@@ -320,7 +320,7 @@ export default function App() {
           kind === "area"
             ? await invoke<SelectionSnapshot | null>("select_screen_area")
             : kind === "history"
-              ? await invoke<SelectionSnapshot>("repeat_history_selection", { selection: target.selection })
+              ? await invoke<SelectionSnapshot | null>("repeat_history_selection", { selection: target.selection })
               : await invoke<SelectionSnapshot>("capture_monitor", { deviceName: target.deviceName });
         if (result) receiveSelection(result);
       } catch (reason) {

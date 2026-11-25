@@ -22,7 +22,7 @@ fn list_monitors() -> Result<Vec<capture::MonitorInfo>, String> {
 async fn select_screen_area(
     app: tauri::AppHandle,
 ) -> Result<Option<selector::SelectionSnapshot>, String> {
-    selector::select_area(app).await
+    selector::select_area(app, None).await
 }
 
 #[tauri::command]
@@ -38,10 +38,8 @@ async fn repeat_last_selection(
 async fn repeat_history_selection(
     app: tauri::AppHandle,
     selection: capture::RectInfo,
-) -> Result<selector::SelectionSnapshot, String> {
-    tauri::async_runtime::spawn_blocking(move || selector::repeat_history_area(app, selection))
-        .await
-        .map_err(|error| format!("重複擷取執行緒異常結束：{error}"))?
+) -> Result<Option<selector::SelectionSnapshot>, String> {
+    selector::select_area(app, Some(selection)).await
 }
 
 #[tauri::command]
@@ -252,7 +250,7 @@ fn focus_main_window(app: &tauri::AppHandle) {
 
 fn launch_selection(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        match selector::select_area(app.clone()).await {
+        match selector::select_area(app.clone(), None).await {
             Ok(Some(selection)) => {
                 focus_main_window(&app);
                 let _ = app.emit("captureflow://selection-complete", selection);

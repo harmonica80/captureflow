@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
     const listeners = new Map();
     const images = new Map([["capture.png", { width: 600, height: 400 }]]);
     const resources = new Map();
-    w.qa = { calls: [], saved: [], history: [], failSave: false, failRepeat: false, confirm: false, saveDelay: 0, activeWrites: 0, maxWrites: 0 };
+    w.qa = { calls: [], saved: [], history: [], failSave: false, failRepeat: false, cancelRepeat: false, confirm: false, saveDelay: 0, activeWrites: 0, maxWrites: 0 };
     localStorage.setItem("captureflow-update-check", String(Date.now()));
     w.qa.emit = (event: string, payload?: unknown) => {
       for (const [key, value] of listeners) if (value.event === event) callbacks.get(value.handler)?.({ event, id: key, payload });
@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
       invoke: async (command: string, args: any = {}) => {
         w.qa.calls.push({ command, args });
         switch (command) {
-          case "plugin:app|version": return "0.5.14";
+          case "plugin:app|version": return "0.5.15";
           case "get_settings": return { captureShortcut: "Alt+Shift+A", historyLimit: 20, language: "zh-TW", defaultSaveDirectory: "", launchAtStartup: false };
           case "list_monitors": return [{ deviceName: "DISPLAY1" }];
           case "list_capture_history": return w.qa.history;
@@ -35,9 +35,11 @@ test.beforeEach(async ({ page }) => {
           case "select_screen_area": return { imagePath: "capture.png", metadataPath: "capture.json", width: 600, height: 400, selection: { x: -600, y: 0, width: 600, height: 400 } };
           case "repeat_history_selection": {
             if (w.qa.failRepeat) throw new Error("擷取範圍已超出目前螢幕，請重新框選。");
-            const { width, height } = args.selection;
+            if (w.qa.cancelRepeat) return null;
+            const selection = { ...args.selection, x: args.selection.x + 20, width: args.selection.width - 10 };
+            const { width, height } = selection;
             images.set("repeat.png", { width, height });
-            return { imagePath: "repeat.png", metadataPath: "repeat.json", width, height, selection: args.selection };
+            return { imagePath: "repeat.png", metadataPath: "repeat.json", width, height, selection };
           }
           case "plugin:image|from_path": resources.set(++id, images.get(args.path)); return id;
           case "plugin:image|rgba": {
@@ -244,7 +246,7 @@ async function seedRepeatHistory(page: Page) {
   }, savedRange);
 }
 
-test("history picker cancels, forwards desktop coordinates, and preserves the editor on failure", async ({ page }) => {
+test("history picker restores the editor on cancel or failure and opens the adjusted capture", async ({ page }) => {
   await draw(page);
   const trigger = page.getByRole("button", { name: "重複歷史擷取範圍" });
   await trigger.click();
@@ -263,10 +265,15 @@ test("history picker cancels, forwards desktop coordinates, and preserves the ed
   await tile.click();
   await expect(page.getByRole("alert")).toContainText("擷取範圍已超出目前螢幕");
   await expect(page.locator("[data-object-id]")).toHaveCount(1);
-  await page.evaluate(() => { (window as any).qa.failRepeat = false; });
+  await page.evaluate(() => { (window as any).qa.failRepeat = false; (window as any).qa.cancelRepeat = true; });
   await trigger.click();
   await tile.click();
-  await expect(page.locator(".annotation-stage canvas").first()).toHaveAttribute("width", "250");
+  await expect(trigger).toBeEnabled();
+  await expect(page.locator("[data-object-id]")).toHaveCount(1);
+  await page.evaluate(() => { (window as any).qa.cancelRepeat = false; });
+  await trigger.click();
+  await tile.click();
+  await expect(page.locator(".annotation-stage canvas").first()).toHaveAttribute("width", "240");
   await expect(page.locator("[data-object-id]")).toHaveCount(0);
   const calls = await page.evaluate(() => (window as any).qa.calls as { command: string; args: unknown }[]);
   const repeat = calls.findIndex(({ command }) => command === "repeat_history_selection");
@@ -275,7 +282,7 @@ test("history picker cancels, forwards desktop coordinates, and preserves the ed
     ["plugin:window|minimize", "repeat_history_selection", "plugin:window|unminimize"].includes(command),
   );
   const captureSequence = ["plugin:window|minimize", "repeat_history_selection", "plugin:window|unminimize"];
-  expect(windowCommands).toEqual([...captureSequence, ...captureSequence]);
+  expect(windowCommands).toEqual([...captureSequence, ...captureSequence, ...captureSequence]);
   expect(calls.slice(0, repeat).some(({ command }) => command === "auto_save_annotation_project")).toBe(true);
   expect(calls.some(({ command }) => command === "load_annotation_project_from")).toBe(false);
 });
