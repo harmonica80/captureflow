@@ -8,4 +8,11 @@
 
 - 前端正式建置、11 項 Playwright 測試、Rust 格式檢查及差異檢查通過。Playwright 涵蓋歷史範圍座標傳遞、取消與失敗後保留原圖、載入調整後的結果，以及淺色／深色介面的文字對比。
 - 原生工具列靜態對比計算：一般 #252525／#FAFAFA 為 14.69:1，滑過 #252525／#E0EDE6 為 12.72:1，選取 #252525／#9BDCFF 為 10.27:1，停用圖示 #696969／#FAFAFA 為 5.26:1。尺寸與提示文字採用不透明底色，#FAFAFA／#252525 為 14.69:1。
-- 本機缺少 MSVC 連結工具。Windows 免安裝版須經 Actions 建置，再實測框選工具列、歷史預放與取消、標註後釘選，以及輸出中是否保留標註。
+- Windows Actions 完成 EXE 建置。實機驗證歷史範圍開啟和取消皆不產生新擷圖，框選可移動及縮放，標註工具可畫矩形及虛線，並可復原、重做。釘選建立 Windows 置頂視窗，輸出 PNG 採用調整後的 350 × 230 範圍並保留標註；標註以外的像素與合成測試畫面一致。測試還原 247 份原有資料檔案並比對 SHA-256。
+
+## 測試版下載
+
+- [Windows 免安裝測試版 ZIP](https://github.com/harmonica80/captureflow/actions/runs/45575250768/artifacts/15004011787) · [GitHub Actions 建置紀錄](https://github.com/harmonica80/captureflow/actions/runs/45575250768)
+- GitHub 下載需要登入，成品保存至 2027 年 2 月 23 日 16:19（臺灣時間）。
+- ZIP 內為 `CaptureFlow-portable.exe`，版本 0.5.15，來源提交 `fdeed43`，大小 6,663,168 bytes。
+- EXE 的 SHA-256 為 `61D7AE25F2421E899FF15A867BDD6D0A2C457DD84C6130D2507E58C8CA08133D`，已與 Actions 紀錄核對。
