@@ -17,6 +17,8 @@ pub struct EditableDocument {
 struct EditRequest {
     id: u64,
     project_path: String,
+    x: i32,
+    y: i32,
 }
 
 struct StickerImage {
@@ -116,6 +118,10 @@ pub fn update(
     platform::replace(id, image_path, project_path, image)
 }
 
+pub fn unpin(id: u64) -> Result<(), String> {
+    platform::unpin(id)
+}
+
 pub fn restore(app: &tauri::AppHandle) {
     let Ok(persistence_path) = sticker_store::path(app) else {
         return;
@@ -189,14 +195,15 @@ mod platform {
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
                     GetClientRect, GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
                     GetWindowRect, KillTimer, PostMessageW, PostQuitMessage, RegisterClassW,
-                    SetForegroundWindow, SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW,
-                    SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-                    GWL_EXSTYLE, HTCAPTION, HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG,
-                    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-                    SWP_DEFERERASE, SWP_NOACTIVATE, SWP_NOCOPYBITS, SW_HIDE, SW_SHOW,
-                    WINDOW_EX_STYLE, WM_APP, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONUP,
-                    WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSW,
-                    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+                    SendMessageTimeoutW, SetForegroundWindow, SetLayeredWindowAttributes, SetTimer,
+                    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW,
+                    CS_VREDRAW, GWL_EXSTYLE, HTCAPTION, HTCLIENT, HTTRANSPARENT, HWND_TOPMOST,
+                    LWA_ALPHA, MSG, SMTO_ABORTIFHUNG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+                    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_DEFERERASE, SWP_NOACTIVATE,
+                    SWP_NOCOPYBITS, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_APP, WM_DESTROY,
+                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST,
+                    WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+                    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
                 },
             },
         },
@@ -208,6 +215,7 @@ mod platform {
     }
 
     const REPLACE_IMAGE: u32 = WM_APP + 1;
+    const UNPIN: u32 = WM_APP + 2;
     struct Replacement {
         image_path: String,
         project_path: Option<String>,
@@ -222,6 +230,35 @@ mod platform {
 
     static ACTIVE: LazyLock<Mutex<HashMap<u64, ActiveSticker>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    pub fn unpin(id: u64) -> Result<(), String> {
+        let hwnd = ACTIVE
+            .lock()
+            .map_err(|_| "貼圖狀態無法讀取。")?
+            .get(&id)
+            .map(|sticker| sticker.hwnd);
+        let Some(hwnd) = hwnd else { return Ok(()) };
+        let response = unsafe {
+            SendMessageTimeoutW(
+                HWND(hwnd as _),
+                UNPIN,
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                2000,
+                None,
+            )
+        };
+        if response.0 == 0
+            && ACTIVE
+                .lock()
+                .ok()
+                .is_some_and(|active| active.contains_key(&id))
+        {
+            return Err("無法取消釘選原貼圖。".into());
+        }
+        Ok(())
+    }
 
     pub fn replace(
         id: u64,
@@ -456,8 +493,12 @@ mod platform {
                 apply_replacement(hwnd);
                 LRESULT(0)
             }
+            UNPIN => {
+                close_sticker(hwnd);
+                LRESULT(1)
+            }
             WM_KEYDOWN if wparam.0 == 0x71 => {
-                request_edit();
+                request_edit(hwnd);
                 LRESULT(0)
             }
             WM_PAINT => {
@@ -817,11 +858,15 @@ mod platform {
         } else if point.0 < 208 {
             toggle_click_through(hwnd);
         } else if point.0 >= client.right - 101 && point.0 < client.right - 49 {
-            request_edit();
+            request_edit(hwnd);
         }
     }
 
-    fn request_edit() {
+    fn request_edit(hwnd: HWND) {
+        let mut rect = RECT::default();
+        if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
+            return;
+        }
         let request = STATE.with(|state| {
             let state = state.borrow();
             let state = state.as_ref()?;
@@ -830,6 +875,8 @@ mod platform {
                 EditRequest {
                     id: state.record_id,
                     project_path: state.project_path.clone()?,
+                    x: rect.left,
+                    y: rect.top,
                 },
             ))
         });
@@ -1282,6 +1329,9 @@ mod platform {
 mod platform {
     use super::{StickerImage, StickerRecord};
     use std::path::PathBuf;
+    pub fn unpin(_id: u64) -> Result<(), String> {
+        Ok(())
+    }
     pub fn run(
         _app: tauri::AppHandle,
         _record: StickerRecord,

@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
       invoke: async (command: string, args: any = {}) => {
         w.qa.calls.push({ command, args });
         switch (command) {
-          case "plugin:app|version": return "0.5.17";
+          case "plugin:app|version": return "0.5.18";
           case "get_settings": return { captureShortcut: "Alt+Shift+A", historyLimit: 20, language: "zh-TW", defaultSaveDirectory: "", launchAtStartup: false };
           case "list_monitors": return [{ deviceName: "DISPLAY1" }];
           case "list_capture_history": return w.qa.history;
@@ -64,6 +64,7 @@ test.beforeEach(async ({ page }) => {
           case "open_sticker":
             w.qa.stickerDocument = structuredClone(args.document);
             return args.stickerId ?? 812;
+          case "unpin_sticker": return;
           case "plugin:dialog|message": return args.buttons.OkCancelCustom[w.qa.confirm ? 0 : 1];
           case "clear_capture_history": return;
           case "plugin:window|minimize":
@@ -234,7 +235,7 @@ test("global capture replacement flushes the previous document", async ({ page }
   expect(await page.evaluate(() => (window as any).qa.saved.some((s: any) => s.objects.length === 1))).toBe(true);
 });
 
-test("selector objects stay editable and a reopened sticker updates the same sticker", async ({ page }) => {
+test("editing a sticker unpins it and keeps its objects available for a new pin", async ({ page }) => {
   const object = { id: "capture-0", type: "rectangle", x: 60, y: 80, width: 80, height: 60, strokeWidth: 4, color: "#ff3b30", lineStyle: "dashed" };
   await page.evaluate((object) => (window as any).qa.emit("captureflow://selection-complete", {
     imagePath: "capture.png", metadataPath: "capture.json", width: 600, height: 400,
@@ -246,8 +247,10 @@ test("selector objects stay editable and a reopened sticker updates the same sti
   await expect.poll(() => page.evaluate(() => (window as any).qa.stickerDocument?.objects)).toEqual([object]);
   await page.getByRole("button", { name: "關閉圖片", exact: true }).click();
   await expect(page.locator(".annotation-editor")).toHaveCount(0);
-  await page.evaluate(() => (window as any).qa.emit("captureflow://edit-sticker", { id: 812, projectPath: "pinned.captureflow.json" }));
+  await page.evaluate(() => (window as any).qa.emit("captureflow://edit-sticker", { id: 812, projectPath: "pinned.captureflow.json", x: -140, y: 220 }));
   const box = page.locator('[data-object-id="capture-0"]');
+  await expect(box).toBeVisible();
+  expect(await page.evaluate(() => (window as any).qa.calls.find((call: any) => call.command === "unpin_sticker")?.args)).toEqual({ stickerId: 812 });
   const strokePoint = await box.evaluate((rect) => {
     const point = new DOMPoint(70, 80).matrixTransform((rect as unknown as SVGRectElement).getScreenCTM()!);
     return { x: point.x, y: point.y };
@@ -255,12 +258,14 @@ test("selector objects stay editable and a reopened sticker updates the same sti
   await page.mouse.click(strokePoint.x, strokePoint.y);
   await page.keyboard.press("Delete");
   await expect(box).toHaveCount(0);
-  await update.click();
+  await page.getByRole("button", { name: "套用標註並建立置頂貼圖", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).qa.calls.filter((call: any) => call.command === "open_sticker").at(-1)?.args)).toMatchObject({
-    stickerId: 812,
+    x: -140,
+    y: 220,
     imagePath: expect.stringMatching(/^crop-/),
     document: { sourceImage: "capture.png", canvasWidth: 600, canvasHeight: 400, objects: [] },
   });
+  expect(await page.evaluate(() => (window as any).qa.calls.filter((call: any) => call.command === "open_sticker").at(-1)?.args.stickerId)).toBeUndefined();
 });
 
 const savedRange = { x: -300, y: 40, width: 250, height: 150 };

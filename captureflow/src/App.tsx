@@ -11,6 +11,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useRef, useState } from "react";
 
 type RectInfo = { x: number; y: number; width: number; height: number };
+type StickerEditRequest = { id: number; projectPath: string; x: number; y: number };
 type MonitorInfo = {
   deviceName: string;
   bounds: RectInfo;
@@ -248,8 +249,8 @@ export default function App() {
     const failed = listen<string>("captureflow://selection-error", (event) =>
       setError(event.payload),
     );
-    const editSticker = listen<{ id: number; projectPath: string }>("captureflow://edit-sticker", ({ payload }) =>
-      void loadProjectPath(payload.projectPath, false, payload.id),
+    const editSticker = listen<StickerEditRequest>("captureflow://edit-sticker", ({ payload }) =>
+      void loadProjectPath(payload.projectPath, false, payload),
     );
     return () => {
       void completed.then((fn) => fn());
@@ -268,7 +269,7 @@ export default function App() {
     return () => { void listener.then((unlisten) => unlisten()); };
   }, []);
 
-  async function loadProjectPath(projectPath: string, fromHistory = false, stickerId?: number) {
+  async function loadProjectPath(projectPath: string, fromHistory = false, sticker?: StickerEditRequest) {
     return withSavedEditor(async () => {
       setBusy("project");
       setError("");
@@ -276,18 +277,19 @@ export default function App() {
         const p = await invoke<Project>("load_annotation_project_from", {
           projectPath,
         });
+        if (sticker) await invoke("unpin_sticker", { stickerId: sticker.id });
+        const { x, y } = sticker ?? { x: 0, y: 0 };
         originalImage.current = p.sourceImage;
         setHistoryProjectPath(fromHistory ? projectPath : undefined);
         setSelection({
           imagePath: p.sourceImage,
           metadataPath: projectPath,
-          selection: { x: 0, y: 0, width: p.canvasWidth, height: p.canvasHeight },
+          selection: { x, y, width: p.canvasWidth, height: p.canvasHeight },
           width: p.canvasWidth,
           height: p.canvasHeight,
-          stickerId,
         });
         setObjects(p.objects);
-        selectionOrigin.current = { x: 0, y: 0 };
+        selectionOrigin.current = { x, y };
         setEditorKey((k) => k + 1);
         setMessage("已開啟包含來源圖片的可編輯專案");
         setHistoryOpen(false);

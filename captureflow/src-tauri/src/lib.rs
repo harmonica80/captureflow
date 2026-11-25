@@ -74,6 +74,13 @@ async fn open_sticker(
 }
 
 #[tauri::command]
+async fn unpin_sticker(sticker_id: u64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || sticker::unpin(sticker_id))
+        .await
+        .map_err(|error| format!("貼圖處理執行緒異常結束：{error}"))?
+}
+
+#[tauri::command]
 fn export_selection(
     app: tauri::AppHandle,
     image_path: String,
@@ -332,6 +339,7 @@ pub fn run() {
             repeat_history_selection,
             capture_monitor,
             open_sticker,
+            unpin_sticker,
             export_selection,
             run_capability_diagnostics,
             get_settings,

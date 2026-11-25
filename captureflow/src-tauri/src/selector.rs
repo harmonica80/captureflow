@@ -616,10 +616,15 @@ fn apply_native_annotations(
                         (points_y[0] - selection.y) as f32,
                     );
                     for index in 1..length {
-                        path.line_to(
-                            (points_x[index] - selection.x) as f32,
-                            (points_y[index] - selection.y) as f32,
-                        );
+                        let x = (points_x[index] - selection.x) as f32;
+                        let y = (points_y[index] - selection.y) as f32;
+                        if index + 1 < length {
+                            let next_x = (points_x[index + 1] - selection.x) as f32;
+                            let next_y = (points_y[index + 1] - selection.y) as f32;
+                            path.quad_to(x, y, (x + next_x) * 0.5, (y + next_y) * 0.5);
+                        } else {
+                            path.line_to(x, y);
+                        }
                     }
                     if let Some(path) = path.finish() {
                         pixmap.stroke_path(
@@ -1248,35 +1253,37 @@ mod platform {
     use windows::{
         core::{w, PCWSTR},
         Win32::{
-            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+            Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM},
             Graphics::Gdi::{
                 Arc, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW,
                 CreatePen, CreateSolidBrush, DeleteDC, DeleteObject, Ellipse, EndPaint, FillRect,
-                GetStockObject, InvalidateRect, LineTo, MoveToEx, Polygon, Rectangle, RoundRect,
-                SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
-                BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, FONT_CHARSET, FONT_CLIP_PRECISION,
-                FONT_OUTPUT_PRECISION, FONT_QUALITY, HBITMAP, HDC, HGDIOBJ, NULL_BRUSH, NULL_PEN,
-                PAINTSTRUCT, PS_DOT, PS_SOLID, SRCCOPY, TRANSPARENT,
+                GetStockObject, GetTextExtentPoint32W, InvalidateRect, LineTo, MoveToEx, Polygon,
+                Rectangle, RoundRect, SelectObject, SetBkMode, SetTextColor, StretchDIBits,
+                TextOutW, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, FONT_CHARSET,
+                FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FONT_QUALITY, HBITMAP, HDC, HGDIOBJ,
+                NULL_BRUSH, NULL_PEN, PAINTSTRUCT, PS_DOT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
                 HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
                 Input::KeyboardAndMouse::{
-                    GetKeyState, ReleaseCapture, SendInput, SetCapture, SetFocus, INPUT, INPUT_0,
-                    INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT, VK_BACK, VK_CONTROL, VK_DOWN,
+                    GetKeyState, GetMouseMovePointsEx, ReleaseCapture, SendInput, SetCapture,
+                    SetFocus, GMMP_USE_DISPLAY_POINTS, INPUT, INPUT_0, INPUT_MOUSE,
+                    MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSEMOVEPOINT, VK_BACK, VK_CONTROL, VK_DOWN,
                     VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP,
                 },
                 WindowsAndMessaging::{
-                    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-                    GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadCursorW,
-                    PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetCursorPos,
-                    SetForegroundWindow, SetTimer, ShowWindow, TranslateMessage, CS_DBLCLKS,
-                    CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW,
-                    IDC_CROSS, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
-                    IDC_SIZEWE, MSG, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE,
-                    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-                    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER,
-                    WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+                    GetMessageTime, GetMessageW, GetWindow, GetWindowRect, IsIconic,
+                    IsWindowVisible, KillTimer, LoadCursorW, PostMessageW, PostQuitMessage,
+                    RegisterClassW, SetCursor, SetCursorPos, SetForegroundWindow, SetTimer,
+                    ShowWindow, TranslateMessage, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GW_CHILD,
+                    GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS, IDC_IBEAM, IDC_SIZEALL,
+                    IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, MSG, SW_HIDE, SW_SHOW,
+                    WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN,
+                    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+                    WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+                    WS_POPUP,
                 },
             },
         },
@@ -1546,12 +1553,31 @@ mod platform {
                 return;
             }
             if self.freehand_points.len() == 128 {
-                let mut index = 0;
-                self.freehand_points.retain(|_| {
-                    let keep = index % 2 == 0 || index == 127;
-                    index += 1;
-                    keep
-                });
+                // Keep the newest samples and simplify the least curved part of the older stroke.
+                let index = self
+                    .freehand_points
+                    .windows(3)
+                    .take(110)
+                    .enumerate()
+                    .min_by_key(|(_, points)| {
+                        let ab = (
+                            i64::from(points[1].0 - points[0].0),
+                            i64::from(points[1].1 - points[0].1),
+                        );
+                        let bc = (
+                            i64::from(points[2].0 - points[1].0),
+                            i64::from(points[2].1 - points[1].1),
+                        );
+                        let turn = (ab.0 * bc.1 - ab.1 * bc.0).abs();
+                        let reverses_direction = ab.0 * bc.0 + ab.1 * bc.1 < 0;
+                        (
+                            reverses_direction,
+                            turn,
+                            ab.0.abs() + ab.1.abs() + bc.0.abs() + bc.1.abs(),
+                        )
+                    })
+                    .map_or(1, |(index, _)| index + 1);
+                self.freehand_points.remove(index);
             }
             self.freehand_points.push(point);
         }
@@ -1559,7 +1585,7 @@ mod platform {
         fn tool_thickness(&self) -> i32 {
             match self.annotation_tool {
                 Some(AnnotationTool::Text) => (self.stroke_width * 2 + 16).clamp(8, 160),
-                Some(AnnotationTool::Number) => (self.stroke_width * 2 + 26).clamp(18, 96),
+                Some(AnnotationTool::Number) => (self.stroke_width * 2 + 43).clamp(18, 96),
                 Some(AnnotationTool::Mosaic) => (self.stroke_width + 8).clamp(4, 48),
                 _ => self.stroke_width,
             }
@@ -1595,6 +1621,20 @@ mod platform {
             self.text_input.is_some() || self.number_input.is_some()
         }
 
+        fn select_input_contents(&mut self) {
+            if !self.editing_value() && self.interaction.is_none() {
+                if let Some(index) = self.selected_annotation {
+                    self.edit_value(index);
+                }
+            }
+            if let Some(input) = self.text_input.as_mut() {
+                input.replace_on_type = true;
+            }
+            if let Some(input) = self.number_input.as_mut() {
+                input.replace_on_type = true;
+            }
+        }
+
         fn commit_value(&mut self) {
             commit_text_input(self);
             if let Some(input) = self.number_input.take() {
@@ -1617,7 +1657,7 @@ mod platform {
         }
 
         fn edit_value(&mut self, index: usize) -> bool {
-            if self.long_capture.is_some() {
+            if self.long_capture.is_some() || self.editing_value() {
                 return false;
             }
             if !matches!(
@@ -1626,7 +1666,6 @@ mod platform {
             ) {
                 return false;
             }
-            self.commit_value();
             match self.annotations[index] {
                 NativeAnnotation::Text {
                     x,
@@ -1893,6 +1932,7 @@ mod platform {
                                         Some(AnnotationTool::Eraser)
                                     )
                                 {
+                                    state.commit_value();
                                     if let Some(index) =
                                         hit_native_annotation(point, &state.annotations)
                                     {
@@ -2255,6 +2295,7 @@ mod platform {
             WM_MOUSEMOVE => {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
+                        let previous_damage = draft_damage(state);
                         let pointer = mouse_point(lparam);
                         state.cursor_position = (
                             pointer.0.clamp(0, state.width.saturating_sub(1)),
@@ -2289,6 +2330,7 @@ mod platform {
                                 ..
                             } = interaction
                             {
+                                append_mouse_history(state, pointer);
                                 state.append_freehand_point(current);
                             }
                             if let Interaction::MoveAnnotation {
@@ -2345,7 +2387,21 @@ mod platform {
                                     hit_native_annotation(point, &state.annotations);
                             }
                         }
-                        InvalidateRect(Some(hwnd), None, false);
+                        let next_damage = draft_damage(state);
+                        let dirty = match (previous_damage, next_damage) {
+                            (Some(old), Some(new)) => Some(RECT {
+                                left: old.left.min(new.left),
+                                top: old.top.min(new.top),
+                                right: old.right.max(new.right),
+                                bottom: old.bottom.max(new.bottom),
+                            }),
+                            (damage, None) | (None, damage) => damage,
+                        };
+                        InvalidateRect(
+                            Some(hwnd),
+                            dirty.as_ref().map(|rect| rect as *const RECT),
+                            false,
+                        );
                     }
                 }
                 LRESULT(0)
@@ -2428,6 +2484,11 @@ mod platform {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
                         let character = wparam.0 as u16;
+                        if character == 1 {
+                            state.select_input_contents();
+                            InvalidateRect(Some(hwnd), None, false);
+                            return LRESULT(0);
+                        }
                         if let Some(input) = state.number_input.as_mut() {
                             if character == VK_BACK.0 {
                                 if input.replace_on_type {
@@ -2532,12 +2593,7 @@ mod platform {
                                 state.edit_value(index);
                             }
                         } else if wparam.0 == 0x41 {
-                            if let Some(input) = state.text_input.as_mut() {
-                                input.replace_on_type = true;
-                            }
-                            if let Some(input) = state.number_input.as_mut() {
-                                input.replace_on_type = true;
-                            }
+                            state.select_input_contents();
                         }
                         InvalidateRect(Some(hwnd), None, false);
                     }
@@ -2586,6 +2642,9 @@ mod platform {
             }
             WM_MOUSEWHEEL => {
                 let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
+                if delta == 0 {
+                    return LRESULT(0);
+                }
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
                         if state.long_capture.is_some() {
@@ -2605,7 +2664,20 @@ mod platform {
                                     + if delta > 0 { 2 } else { -2 })
                                 .clamp(8, 160);
                             }
-                        } else if let Some(index) = state.hovered_annotation {
+                        } else if let Some(index) = {
+                            let (x, y) = mouse_point(lparam);
+                            let point = (x - state.origin_x, y - state.origin_y);
+                            hit_native_annotation(point, &state.annotations).or_else(|| {
+                                state.selected_annotation.filter(|&index| {
+                                    matches!(
+                                        state.annotations.get(index),
+                                        Some(NativeAnnotation::Number { .. })
+                                    ) && state
+                                        .selection
+                                        .is_some_and(|rect| clamp_to_rect(point, rect) == point)
+                                })
+                            })
+                        } {
                             state.save_undo();
                             let step = if delta > 0 { 1 } else { -1 };
                             if GetKeyState(VK_SHIFT.0 as i32) < 0
@@ -2617,6 +2689,11 @@ mod platform {
                                 {
                                     state.text_outline_width = outline_width;
                                 }
+                            } else if let NativeAnnotation::Number { size, .. } =
+                                &mut state.annotations[index]
+                            {
+                                let pixels = ((delta.abs() * 6 + 60) / 120).max(1) * delta.signum();
+                                *size = (*size + pixels).clamp(18, 96);
                             } else {
                                 set_native_stroke_width(&mut state.annotations[index], step);
                             }
@@ -2829,18 +2906,23 @@ mod platform {
                         );
                         buffer.background_valid = true;
                     }
+                    let dirty = paint.rcPaint;
+                    let dirty_width = dirty.right - dirty.left;
+                    let dirty_height = dirty.bottom - dirty.top;
                     let _ = BitBlt(
                         dc,
-                        0,
-                        0,
-                        state.width,
-                        state.height,
+                        dirty.left,
+                        dirty.top,
+                        dirty_width,
+                        dirty_height,
                         Some(buffer.background.dc),
-                        0,
-                        0,
+                        dirty.left,
+                        dirty.top,
                         SRCCOPY,
                     );
-                    if let Some(bounds) = render_annotations(state, &mut buffer.annotation_pixels) {
+                    if let Some(bounds) =
+                        render_annotations(state, dirty, &mut buffer.annotation_pixels)
+                    {
                         draw_bgra(dc, bounds, &buffer.annotation_pixels);
                     }
 
@@ -2971,13 +3053,13 @@ mod platform {
                     }
                     let _ = BitBlt(
                         screen_dc,
-                        0,
-                        0,
-                        state.width,
-                        state.height,
+                        dirty.left,
+                        dirty.top,
+                        dirty_width,
+                        dirty_height,
                         Some(dc),
-                        0,
-                        0,
+                        dirty.left,
+                        dirty.top,
                         SRCCOPY,
                     );
                 });
@@ -3121,6 +3203,66 @@ mod platform {
         (x, y)
     }
 
+    unsafe fn append_mouse_history(state: &mut SelectorState, pointer: (i32, i32)) {
+        let (Some(selection), Some(&last)) = (state.selection, state.freehand_points.last()) else {
+            return;
+        };
+        let sample = MOUSEMOVEPOINT {
+            x: (pointer.0 + state.origin_x) & 0xffff,
+            y: (pointer.1 + state.origin_y) & 0xffff,
+            time: GetMessageTime() as u32,
+            ..Default::default()
+        };
+        let mut history = [MOUSEMOVEPOINT::default(); 64];
+        let count = GetMouseMovePointsEx(
+            size_of::<MOUSEMOVEPOINT>() as u32,
+            &sample,
+            &mut history,
+            GMMP_USE_DISPLAY_POINTS,
+        );
+        if count <= 1 {
+            return;
+        }
+        let origin = (state.origin_x, state.origin_y);
+        let local = |point: &MOUSEMOVEPOINT| {
+            (
+                i32::from(point.x as i16) - origin.0,
+                i32::from(point.y as i16) - origin.1,
+            )
+        };
+        let history = &history[..count as usize];
+        // A real earlier point anchors this batch to the current stroke. Synthetic or
+        // out-of-history moves still use the WM_MOUSEMOVE point.
+        if let Some(anchor) = history
+            .iter()
+            .skip(1)
+            .position(|point| local(point) == last)
+        {
+            for point in history[1..anchor + 1].iter().rev() {
+                state.append_freehand_point(clamp_to_rect(local(point), selection));
+            }
+        }
+    }
+
+    fn draft_damage(state: &SelectorState) -> Option<RECT> {
+        let Some(Interaction::Annotate { start, tool }) = state.interaction else {
+            return None;
+        };
+        let draft = draft_annotation(state, tool, start, state.cursor_position)?;
+        let bounds = native_annotation_bounds(draft);
+        let padding = if tool == AnnotationTool::Arrow {
+            state.stroke_width * 4 + 4
+        } else {
+            state.stroke_width + 4
+        };
+        Some(RECT {
+            left: (bounds.x - padding).max(0),
+            top: (bounds.y - padding).max(0),
+            right: (bounds.x + bounds.width + padding).min(state.width),
+            bottom: (bounds.y + bounds.height + padding).min(state.height),
+        })
+    }
+
     fn clamp_point(point: (i32, i32), width: i32, height: i32) -> (i32, i32) {
         (point.0.clamp(0, width), point.1.clamp(0, height))
     }
@@ -3145,6 +3287,15 @@ mod platform {
             return;
         };
         if input.buffer.is_empty() {
+            if let Some(index) = input
+                .editing_index
+                .filter(|&index| index < state.annotations.len())
+            {
+                state.save_undo();
+                state.annotations.remove(index);
+                state.selected_annotation = None;
+                state.hovered_annotation = None;
+            }
             return;
         }
         let mut text = [0u16; 32];
@@ -3334,7 +3485,13 @@ mod platform {
             };
             (native_annotation_bounds(annotation), message)
         } else if let Some(input) = state.text_input.as_ref() {
-            let launch_tip = if state.english {
+            let launch_tip = if input.replace_on_type {
+                if state.english {
+                    "All text selected  ·  Backspace: Clear"
+                } else {
+                    "已全選　·　Backspace 清除"
+                }
+            } else if state.english {
                 "Ctrl+A: Select all  ·  Enter: Apply  ·  Esc: Cancel"
             } else {
                 "Ctrl+A 全選　·　Enter 確認　·　Esc 取消"
@@ -4003,7 +4160,11 @@ mod platform {
         bgra
     }
 
-    fn render_annotations(state: &SelectorState, scratch: &mut Vec<u8>) -> Option<RectInfo> {
+    fn render_annotations(
+        state: &SelectorState,
+        dirty: RECT,
+        scratch: &mut Vec<u8>,
+    ) -> Option<RectInfo> {
         if state.long_capture.is_some() {
             return None;
         }
@@ -4063,6 +4224,16 @@ mod platform {
         top = top.max(selection.y);
         right = right.min(selection.x + selection.width);
         bottom = bottom.min(selection.y + selection.height);
+        // Mosaic averages complete blocks, so its render must retain the surrounding pixels.
+        if !annotations
+            .iter()
+            .any(|annotation| matches!(annotation, NativeAnnotation::Mosaic { .. }))
+        {
+            left = left.max(dirty.left);
+            top = top.max(dirty.top);
+            right = right.min(dirty.right);
+            bottom = bottom.min(dirty.bottom);
+        }
         if right <= left || bottom <= top {
             return None;
         }
@@ -4167,7 +4338,7 @@ mod platform {
                 continue;
             }
             if matches!(annotation, NativeAnnotation::Text { .. }) {
-                draw_native_annotation(dc, *annotation);
+                draw_native_annotation(dc, *annotation, false);
             }
         }
         if let Some(input) = state.text_input.as_ref() {
@@ -4184,11 +4355,11 @@ mod platform {
                 outline_color: input.outline_color,
                 outline_width: input.outline_width,
             };
-            draw_native_annotation(dc, draft);
+            draw_native_annotation(dc, draft, input.replace_on_type);
             if length > 0 {
                 draw_native_object_handles(dc, draft);
             }
-            if state.caret_visible {
+            if state.caret_visible && !input.replace_on_type {
                 let caret_x = input.x + text_visual_width(&text[..length], input.font_size) + 2;
                 for (width, color) in [(4, 0x00FF_FFFF), (2, 0x0025_2525)] {
                     let caret = CreatePen(PS_SOLID, width, COLORREF(color));
@@ -4248,6 +4419,7 @@ mod platform {
     unsafe fn draw_native_annotation(
         dc: windows::Win32::Graphics::Gdi::HDC,
         annotation: NativeAnnotation,
+        selected_text: bool,
     ) {
         match annotation {
             NativeAnnotation::Rectangle {
@@ -4357,6 +4529,25 @@ mod platform {
                 let old_font = SelectObject(dc, font.into());
                 SetBkMode(dc, TRANSPARENT);
                 let slice = &text[..length.min(text.len())];
+                if selected_text && !slice.is_empty() {
+                    let mut extent = SIZE::default();
+                    if GetTextExtentPoint32W(dc, slice, &mut extent).as_bool() {
+                        let bounds = RECT {
+                            left: x,
+                            top: y,
+                            right: x + extent.cx.max(1),
+                            bottom: y + extent.cy.max(font_size),
+                        };
+                        let brush = CreateSolidBrush(COLORREF(0x0080_4B16));
+                        FillRect(dc, &bounds, brush);
+                        DeleteObject(brush.into());
+                    }
+                    SetTextColor(dc, COLORREF(0x00FF_FFFF));
+                    TextOutW(dc, x, y, slice);
+                    SelectObject(dc, old_font);
+                    DeleteObject(font.into());
+                    return;
+                }
                 SetTextColor(dc, COLORREF(outline_color));
                 let radius = outline_width.clamp(0, 12);
                 for dy in -radius..=radius {

@@ -314,6 +314,17 @@ function arrowPolygon(o: ArrowObject) {
     .map((p) => `${p.x},${p.y}`)
     .join(" ");
 }
+function penPath(points: Point[]) {
+  if (!points.length) return "";
+  let path = `M ${points[0].x} ${points[0].y}`;
+  for (let index = 1; index < points.length - 1; index++) {
+    const point = points[index], next = points[index + 1];
+    path += ` Q ${point.x} ${point.y} ${(point.x + next.x) / 2} ${(point.y + next.y) / 2}`;
+  }
+  const end = points[points.length - 1];
+  return points.length > 1 ? `${path} L ${end.x} ${end.y}` : path;
+}
+
 function dashArray(style?: LineStyle, width = 1) {
   if (style === "dashed") return `${width * 4} ${width * 2.5}`;
   if (style === "dotted") return `${width * 0.8} ${width * 2}`;
@@ -1941,13 +1952,14 @@ export default function AnnotationEditor({
                   );
                 if (o.type === "pen")
                   return (
-                    <polyline
+                    <path
                       key={o.id}
                       {...common}
-                      points={o.points.map((p) => `${p.x},${p.y}`).join(" ")}
+                      d={penPath(o.points)}
                       fill="none"
                       stroke={o.color}
                       strokeWidth={o.strokeWidth}
+                      strokeDasharray={dashArray(o.lineStyle, o.strokeWidth)}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -2128,8 +2140,8 @@ export default function AnnotationEditor({
                 </g>
               )}{" "}
               {penPoints.length > 1 && (
-                <polyline
-                  points={penPoints.map((p) => `${p.x},${p.y}`).join(" ")}
+                <path
+                  d={penPath(penPoints)}
                   fill="none"
                   stroke={color}
                   strokeWidth={strokeWidth}
