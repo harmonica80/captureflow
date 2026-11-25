@@ -1270,13 +1270,13 @@ mod platform {
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
                     GetWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadCursorW,
                     PostMessageW, PostQuitMessage, RegisterClassW, SetCursor, SetCursorPos,
-                    SetForegroundWindow, SetTimer, ShowWindow, TranslateMessage, CS_HREDRAW,
-                    CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW, IDC_CROSS,
-                    IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
-                    MSG, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY,
-                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-                    WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
-                    WS_EX_TOPMOST, WS_POPUP,
+                    SetForegroundWindow, SetTimer, ShowWindow, TranslateMessage, CS_DBLCLKS,
+                    CS_HREDRAW, CS_VREDRAW, GW_CHILD, GW_HWNDFIRST, GW_HWNDNEXT, IDC_ARROW,
+                    IDC_CROSS, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
+                    IDC_SIZEWE, MSG, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE,
+                    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+                    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETCURSOR, WM_TIMER,
+                    WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
                 },
             },
         },
@@ -1425,6 +1425,7 @@ mod platform {
         text_outline_color: u32,
         text_outline_width: i32,
         text_input: Option<TextInput>,
+        number_input: Option<NumberInput>,
         freehand_points: Vec<(i32, i32)>,
         next_number: u32,
         caret_visible: bool,
@@ -1529,9 +1530,17 @@ mod platform {
         ToolbarButton::Delete,
     ];
     const TOOLBAR_COLOR_INDEX: usize = 14;
+    const CAPTURE_BUTTON_COUNT: usize = 4;
     const TOOL_SIZE: i32 = 44;
 
     impl SelectorState {
+        fn toolbar_buttons(&self) -> &'static [ToolbarButton] {
+            if self.long_capture.is_some() {
+                &TOOLBAR_BUTTONS[..CAPTURE_BUTTON_COUNT]
+            } else {
+                TOOLBAR_BUTTONS
+            }
+        }
         fn append_freehand_point(&mut self, point: (i32, i32)) {
             if self.freehand_points.last() == Some(&point) {
                 return;
@@ -1569,7 +1578,7 @@ mod platform {
         }
 
         fn undo_or_redo(&mut self, redo: bool) {
-            self.apply_pending_text();
+            self.commit_value();
             let (from, to) = if redo {
                 (&mut self.redo_annotations, &mut self.undo_annotations)
             } else {
@@ -1582,21 +1591,98 @@ mod platform {
             }
         }
 
-        fn apply_pending_text(&mut self) {
+        fn editing_value(&self) -> bool {
+            self.text_input.is_some() || self.number_input.is_some()
+        }
+
+        fn commit_value(&mut self) {
             commit_text_input(self);
+            if let Some(input) = self.number_input.take() {
+                if let Ok(number) = input.digits.parse::<u32>() {
+                    if let Some(NativeAnnotation::Number {
+                        number: previous, ..
+                    }) = self.annotations.get(input.index)
+                    {
+                        if *previous != number {
+                            self.save_undo();
+                            if let NativeAnnotation::Number { number: value, .. } =
+                                &mut self.annotations[input.index]
+                            {
+                                *value = number;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        fn edit_value(&mut self, index: usize) -> bool {
+            if self.long_capture.is_some() {
+                return false;
+            }
+            if !matches!(
+                self.annotations.get(index),
+                Some(NativeAnnotation::Text { .. } | NativeAnnotation::Number { .. })
+            ) {
+                return false;
+            }
+            self.commit_value();
+            match self.annotations[index] {
+                NativeAnnotation::Text {
+                    x,
+                    y,
+                    text,
+                    length,
+                    font_size,
+                    color,
+                    outline_color,
+                    outline_width,
+                } => {
+                    self.annotation_tool = Some(AnnotationTool::Text);
+                    self.text_input = Some(TextInput {
+                        x,
+                        y,
+                        buffer: text[..length.min(text.len())].to_vec(),
+                        font_size,
+                        color,
+                        outline_color,
+                        outline_width,
+                        editing_index: Some(index),
+                        replace_on_type: false,
+                    });
+                    self.caret_visible = true;
+                }
+                NativeAnnotation::Number { number, .. } => {
+                    self.annotation_tool = Some(AnnotationTool::Number);
+                    self.number_input = Some(NumberInput {
+                        index,
+                        digits: number.to_string(),
+                        replace_on_type: true,
+                    });
+                }
+                _ => return false,
+            }
+            self.selected_annotation = Some(index);
+            self.interaction = None;
+            true
         }
 
         fn result(&mut self, pin: bool) -> Option<SelectedArea> {
             let selection = self
                 .selection
                 .filter(|rect| rect.width >= 2 && rect.height >= 2)?;
-            self.apply_pending_text();
+            self.commit_value();
             self.selected_annotation = None;
             self.hovered_annotation = None;
+            let annotations = std::mem::take(&mut self.annotations);
             Some(SelectedArea {
                 selection,
                 corner_radius: self.corner_radius,
-                annotations: std::mem::take(&mut self.annotations),
+                annotations: if self.long_capture.is_some() {
+                    Vec::new()
+                } else {
+                    annotations
+                },
                 long_capture: self.long_capture.take().map(|long| LongCaptureResult {
                     height: (long.stitched_bgra.len() / (long.width * 4)) as i32,
                     width: long.width as i32,
@@ -1630,6 +1716,13 @@ mod platform {
         outline_color: u32,
         outline_width: i32,
         editing_index: Option<usize>,
+        replace_on_type: bool,
+    }
+
+    struct NumberInput {
+        index: usize,
+        digits: String,
+        replace_on_type: bool,
     }
 
     #[derive(Clone, Copy)]
@@ -1704,6 +1797,7 @@ mod platform {
             text_outline_color: 0x00FF_FFFF,
             text_outline_width: 1,
             text_input: None,
+            number_input: None,
             freehand_points: Vec::new(),
             next_number: 1,
             caret_visible: true,
@@ -1734,7 +1828,7 @@ mod platform {
         let cursor =
             LoadCursorW(None, IDC_CROSS).map_err(|error| format!("無法載入十字游標：{error}"))?;
         let window_class = WNDCLASSW {
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
             hCursor: cursor,
@@ -1786,11 +1880,31 @@ mod platform {
         lparam: LPARAM,
     ) -> LRESULT {
         match message {
-            WM_LBUTTONDOWN => {
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 let point = mouse_point(lparam);
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
                         let point = clamp_point(point, state.width, state.height);
+                        if message == WM_LBUTTONDBLCLK {
+                            if let Some(selection) = state.selection {
+                                if hit_annotation_toolbar(point, selection, state).is_none()
+                                    && !matches!(
+                                        state.annotation_tool,
+                                        Some(AnnotationTool::Eraser)
+                                    )
+                                {
+                                    if let Some(index) =
+                                        hit_native_annotation(point, &state.annotations)
+                                    {
+                                        if state.edit_value(index) {
+                                            let _ = ReleaseCapture();
+                                            InvalidateRect(Some(hwnd), None, false);
+                                        }
+                                    }
+                                }
+                            }
+                            return LRESULT(0);
+                        }
                         if let Some(selection) = state.selection {
                             if state.color_palette_open {
                                 if let Some(color_index) =
@@ -1827,6 +1941,11 @@ mod platform {
                                 }
                             }
                             if let Some(button) = hit_annotation_toolbar(point, selection, state) {
+                                if state.number_input.is_some()
+                                    && !matches!(button, ToolbarButton::Cancel)
+                                {
+                                    state.commit_value();
+                                }
                                 match button {
                                     ToolbarButton::Capture | ToolbarButton::Pin => {
                                         if let Some(result) =
@@ -1851,15 +1970,18 @@ mod platform {
                                         );
                                     }
                                     ToolbarButton::LongCapture => {
-                                        state.apply_pending_text();
+                                        state.commit_value();
                                         if state.long_capture.is_none() {
-                                            let _ = begin_long_capture(state);
+                                            if begin_long_capture(state).is_ok() {
+                                                state.hovered_annotation = None;
+                                                state.selected_annotation = None;
+                                            }
                                         } else {
                                             state.long_capture = None;
                                         }
                                     }
                                     ToolbarButton::Tool(tool) => {
-                                        state.apply_pending_text();
+                                        state.commit_value();
                                         state.annotation_tool =
                                             if state.annotation_tool == Some(tool) {
                                                 None
@@ -1869,7 +1991,7 @@ mod platform {
                                         state.selected_annotation = None;
                                     }
                                     ToolbarButton::Range => {
-                                        state.apply_pending_text();
+                                        state.commit_value();
                                         state.annotation_tool = None;
                                         state.selected_annotation = None;
                                         state.hovered_annotation = None;
@@ -1919,7 +2041,7 @@ mod platform {
                                     ToolbarButton::Undo => state.undo_or_redo(false),
                                     ToolbarButton::Redo => state.undo_or_redo(true),
                                     ToolbarButton::Delete => {
-                                        state.apply_pending_text();
+                                        state.commit_value();
                                         state.delete_annotation();
                                     }
                                     ToolbarButton::Thickness => {}
@@ -1931,11 +2053,10 @@ mod platform {
                                 return LRESULT(0);
                             }
                             state.color_palette_open = false;
-                            // Clicking away from the active text editor commits it as a normal
-                            // selectable annotation before processing the new target.
-                            if state.text_input.is_some() {
-                                commit_text_input(state);
+                            if state.long_capture.is_some() {
+                                return LRESULT(0);
                             }
+                            state.commit_value();
                             let button = radius_button_rect(selection, state.width, state.height);
                             if point.0 >= button.left - 8
                                 && point.0 <= button.right + 8
@@ -2009,37 +2130,12 @@ mod platform {
                                 return LRESULT(0);
                             }
                             if let Some(index) = hit_native_annotation(point, &state.annotations) {
-                                if let NativeAnnotation::Text {
-                                    x,
-                                    y,
-                                    text,
-                                    length,
-                                    font_size,
-                                    color,
-                                    outline_color,
-                                    outline_width,
-                                } = state.annotations[index]
+                                if state.selected_annotation == Some(index)
+                                    && GetKeyState(VK_CONTROL.0 as i32) < 0
+                                    && state.edit_value(index)
                                 {
-                                    if state.selected_annotation == Some(index)
-                                        && matches!(
-                                            state.annotation_tool,
-                                            Some(AnnotationTool::Text)
-                                        )
-                                        && GetKeyState(VK_CONTROL.0 as i32) < 0
-                                    {
-                                        state.text_input = Some(TextInput {
-                                            x,
-                                            y,
-                                            buffer: text[..length.min(text.len())].to_vec(),
-                                            font_size,
-                                            color,
-                                            outline_color,
-                                            outline_width,
-                                            editing_index: Some(index),
-                                        });
-                                        InvalidateRect(Some(hwnd), None, false);
-                                        return LRESULT(0);
-                                    }
+                                    InvalidateRect(Some(hwnd), None, false);
+                                    return LRESULT(0);
                                 }
                                 state.selected_annotation = Some(index);
                                 state.hovered_annotation = Some(index);
@@ -2086,6 +2182,7 @@ mod platform {
                                             outline_color: state.text_outline_color,
                                             outline_width: state.text_outline_width,
                                             editing_index: None,
+                                            replace_on_type: false,
                                         });
                                         state.caret_visible = true;
                                     } else if matches!(tool, AnnotationTool::Number) {
@@ -2097,7 +2194,7 @@ mod platform {
                                             size: state.tool_thickness(),
                                             color: state.current_color,
                                         });
-                                        state.next_number += 1;
+                                        state.next_number = state.next_number.saturating_add(1);
                                         state.selected_annotation =
                                             Some(state.annotations.len() - 1);
                                     } else if matches!(tool, AnnotationTool::Eraser) {
@@ -2243,7 +2340,7 @@ mod platform {
                             let point = clamp_point(mouse_point(lparam), state.width, state.height);
                             if state.selection.is_none() {
                                 state.hover_candidate = detect_window_at(hwnd, point, state);
-                            } else {
+                            } else if state.long_capture.is_none() {
                                 state.hovered_annotation =
                                     hit_native_annotation(point, &state.annotations);
                             }
@@ -2330,17 +2427,56 @@ mod platform {
             WM_CHAR => {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if let Some(input) = state.text_input.as_mut() {
-                            let character = wparam.0 as u16;
+                        let character = wparam.0 as u16;
+                        if let Some(input) = state.number_input.as_mut() {
                             if character == VK_BACK.0 {
-                                input.buffer.pop();
-                            } else if character == VK_RETURN.0 {
-                            } else if character >= 0x20 && input.buffer.len() < 32 {
-                                input.buffer.push(character);
+                                if input.replace_on_type {
+                                    input.digits.clear();
+                                } else {
+                                    input.digits.pop();
+                                }
+                                input.replace_on_type = false;
+                            } else if (48..=57).contains(&character) {
+                                let mut candidate = if input.replace_on_type {
+                                    String::new()
+                                } else {
+                                    input.digits.clone()
+                                };
+                                candidate.push(char::from(character as u8));
+                                if candidate.len() <= 10 && candidate.parse::<u32>().is_ok() {
+                                    input.digits = candidate;
+                                    input.replace_on_type = false;
+                                }
                             }
-                            if character == VK_RETURN.0 {
-                                commit_text_input(state);
+                            InvalidateRect(Some(hwnd), None, false);
+                            return LRESULT(0);
+                        }
+                        if let Some(input) = state.text_input.as_mut() {
+                            if character == VK_BACK.0 {
+                                if input.replace_on_type {
+                                    input.buffer.clear();
+                                } else if input
+                                    .buffer
+                                    .pop()
+                                    .is_some_and(|last| (0xDC00..=0xDFFF).contains(&last))
+                                    && input
+                                        .buffer
+                                        .last()
+                                        .is_some_and(|last| (0xD800..=0xDBFF).contains(last))
+                                {
+                                    input.buffer.pop();
+                                }
+                                input.replace_on_type = false;
+                            } else if character >= 0x20 {
+                                if input.replace_on_type {
+                                    input.buffer.clear();
+                                }
+                                input.replace_on_type = false;
+                                if input.buffer.len() < 32 {
+                                    input.buffer.push(character);
+                                }
                             }
+                            state.caret_visible = true;
                             InvalidateRect(Some(hwnd), None, false);
                             return LRESULT(0);
                         }
@@ -2351,7 +2487,9 @@ mod platform {
             WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if state.text_input.take().is_some() {
+                        if state.editing_value() {
+                            state.text_input = None;
+                            state.number_input = None;
                             InvalidateRect(Some(hwnd), None, false);
                             return LRESULT(0);
                         }
@@ -2369,8 +2507,8 @@ mod platform {
                     let Some(state) = guard.as_mut() else {
                         return LRESULT(0);
                     };
-                    if state.text_input.is_some() {
-                        state.apply_pending_text();
+                    if state.editing_value() {
+                        state.commit_value();
                         InvalidateRect(Some(hwnd), None, false);
                         return LRESULT(0);
                     }
@@ -2382,10 +2520,57 @@ mod platform {
                 }
                 LRESULT(0)
             }
+            WM_KEYDOWN
+                if wparam.0 == 0x71
+                    || (wparam.0 == 0x41 && GetKeyState(VK_CONTROL.0 as i32) < 0) =>
+            {
+                if let Ok(mut guard) = STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        if wparam.0 == 0x71 && state.interaction.is_none() && !state.editing_value()
+                        {
+                            if let Some(index) = state.selected_annotation {
+                                state.edit_value(index);
+                            }
+                        } else if wparam.0 == 0x41 {
+                            if let Some(input) = state.text_input.as_mut() {
+                                input.replace_on_type = true;
+                            }
+                            if let Some(input) = state.number_input.as_mut() {
+                                input.replace_on_type = true;
+                            }
+                        }
+                        InvalidateRect(Some(hwnd), None, false);
+                    }
+                }
+                LRESULT(0)
+            }
             WM_KEYDOWN if matches!(wparam.0, 0x59 | 0x5A | 0x2E) => {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if state.text_input.is_none() && state.interaction.is_none() {
+                        if wparam.0 == 0x2E && state.editing_value() {
+                            if let Some(input) = state
+                                .text_input
+                                .as_mut()
+                                .filter(|input| input.replace_on_type)
+                            {
+                                input.buffer.clear();
+                                input.replace_on_type = false;
+                            }
+                            if let Some(input) = state
+                                .number_input
+                                .as_mut()
+                                .filter(|input| input.replace_on_type)
+                            {
+                                input.digits.clear();
+                                input.replace_on_type = false;
+                            }
+                            InvalidateRect(Some(hwnd), None, false);
+                            return LRESULT(0);
+                        }
+                        if !state.editing_value()
+                            && state.interaction.is_none()
+                            && state.long_capture.is_none()
+                        {
                             if wparam.0 == 0x2E {
                                 state.delete_annotation();
                             } else if GetKeyState(VK_CONTROL.0 as i32) < 0 {
@@ -2403,8 +2588,12 @@ mod platform {
                 let delta = ((wparam.0 >> 16) as u16 as i16) as i32;
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if state.long_capture.is_some() && delta < 0 {
-                            let _ = capture_long_segment(state, hwnd, delta);
+                        if state.long_capture.is_some() {
+                            if delta < 0 {
+                                let _ = capture_long_segment(state, hwnd, delta);
+                            }
+                        } else if state.number_input.is_some() {
+                            // The number being entered is independent of the marker size.
                         } else if let Some(input) = state.text_input.as_mut() {
                             if GetKeyState(VK_SHIFT.0 as i32) < 0 {
                                 input.outline_width = (input.outline_width
@@ -2455,7 +2644,10 @@ mod platform {
             {
                 if let Ok(mut guard) = STATE.lock() {
                     if let Some(state) = guard.as_mut() {
-                        if state.interaction.is_none() {
+                        if state.interaction.is_none()
+                            && !state.editing_value()
+                            && state.long_capture.is_none()
+                        {
                             if let Some(selection) = state.selection {
                                 let distance = if GetKeyState(VK_SHIFT.0 as i32) < 0 {
                                     10
@@ -2680,7 +2872,7 @@ mod platform {
                             SelectObject(dc, old_pen);
                             DeleteObject(pen.into());
 
-                            if state.selection.is_some() {
+                            if state.selection.is_some() && state.long_capture.is_none() {
                                 let handle_brush = CreateSolidBrush(COLORREF(0x00FF_FFFF));
                                 let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
                                 let old_brush = SelectObject(dc, handle_brush.into());
@@ -2719,9 +2911,8 @@ mod platform {
                                 SelectObject(dc, old_brush);
                                 DeleteObject(button_pen.into());
                                 DeleteObject(button_brush.into());
-
-                                draw_long_preview(dc, state, rect);
                             }
+                            draw_long_preview(dc, state, rect);
 
                             let dimensions = if let Some(long) = state.long_capture.as_ref() {
                                 format!(
@@ -2756,10 +2947,13 @@ mod platform {
                             TextOutW(dc, label_x + 6, label_y + 2, &dimensions);
                         }
                     }
-                    draw_native_annotations(dc, state);
+                    if state.long_capture.is_none() {
+                        draw_native_annotations(dc, state);
+                    }
                     if state.selection.is_none() && state.interaction.is_none() {
                         draw_magnifier(dc, state);
                     }
+                    draw_edit_hint(dc, state);
                     if state.interaction.is_none()
                         || matches!(state.interaction, Some(Interaction::Annotate { .. }))
                     {
@@ -2970,8 +3164,10 @@ mod platform {
             .editing_index
             .filter(|index| *index < state.annotations.len())
         {
-            state.save_undo();
-            state.annotations[index] = annotation;
+            if state.annotations[index] != annotation {
+                state.save_undo();
+                state.annotations[index] = annotation;
+            }
             state.selected_annotation = Some(index);
         } else {
             state.save_undo();
@@ -3070,7 +3266,7 @@ mod platform {
                 width: state.width,
                 height: state.height,
             });
-        let count = TOOLBAR_BUTTONS.len() as i32;
+        let count = state.toolbar_buttons().len() as i32;
         let columns = (monitor.width / TOOL_SIZE).clamp(1, count);
         let toolbar_width = columns * TOOL_SIZE;
         let toolbar_height = ((count + columns - 1) / columns) * TOOL_SIZE;
@@ -3112,9 +3308,83 @@ mod platform {
         }
         let column = (point.0 - layout.bounds.left) / TOOL_SIZE;
         let row = (point.1 - layout.bounds.top) / TOOL_SIZE;
-        TOOLBAR_BUTTONS
+        state
+            .toolbar_buttons()
             .get((row * layout.columns + column) as usize)
             .copied()
+    }
+
+    unsafe fn draw_edit_hint(dc: HDC, state: &SelectorState) {
+        let Some(selection) = state.selection else {
+            return;
+        };
+        let (anchor, message) = if let Some(input) = state.number_input.as_ref() {
+            let Some(annotation) = state.annotations.get(input.index).copied() else {
+                return;
+            };
+            let digits = if input.digits.is_empty() {
+                "–"
+            } else {
+                &input.digits
+            };
+            let message = if state.english {
+                format!("Number: {digits}  ·  Enter: Apply  ·  Esc: Cancel")
+            } else {
+                format!("編輯編號：{digits}　·　Enter 確認　·　Esc 取消")
+            };
+            (native_annotation_bounds(annotation), message)
+        } else if let Some(input) = state.text_input.as_ref() {
+            let launch_tip = if state.english {
+                "Ctrl+A: Select all  ·  Enter: Apply  ·  Esc: Cancel"
+            } else {
+                "Ctrl+A 全選　·　Enter 確認　·　Esc 取消"
+            };
+            (
+                RectInfo {
+                    x: input.x,
+                    y: input.y,
+                    width: 0,
+                    height: input.font_size + 4,
+                },
+                launch_tip.to_owned(),
+            )
+        } else {
+            return;
+        };
+        let monitor = annotation_toolbar_layout(selection, state).monitor;
+        let width = message
+            .chars()
+            .map(|c| if c.is_ascii() { 9 } else { 17 })
+            .sum::<i32>()
+            + 16;
+        let left = anchor.x.clamp(
+            monitor.x,
+            (monitor.x + monitor.width - width).max(monitor.x),
+        );
+        let below = anchor.y + anchor.height + 7;
+        let top = if below + 24 <= (selection.y + selection.height).min(monitor.y + monitor.height)
+        {
+            below
+        } else {
+            (anchor.y - 31).max(monitor.y)
+        };
+        let bounds = RECT {
+            left,
+            top,
+            right: left + width,
+            bottom: top + 24,
+        };
+        let background = CreateSolidBrush(COLORREF(0x0025_2525));
+        FillRect(dc, &bounds, background);
+        DeleteObject(background.into());
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, COLORREF(0x00FA_FAFA));
+        TextOutW(
+            dc,
+            left + 8,
+            top + 3,
+            &message.encode_utf16().collect::<Vec<_>>(),
+        );
     }
 
     unsafe fn draw_toolbar_hint(
@@ -3135,8 +3405,14 @@ mod platform {
             ToolbarButton::Tool(AnnotationTool::Line) => ("直線", "Line"),
             ToolbarButton::Tool(AnnotationTool::Freehand) => ("畫筆", "Freehand"),
             ToolbarButton::Tool(AnnotationTool::Arrow) => ("箭頭", "Arrow"),
-            ToolbarButton::Tool(AnnotationTool::Text) => ("文字", "Text"),
-            ToolbarButton::Tool(AnnotationTool::Number) => ("編號", "Number"),
+            ToolbarButton::Tool(AnnotationTool::Text) => (
+                "文字 · 點兩下物件可重編",
+                "Text · Double-click an object to edit",
+            ),
+            ToolbarButton::Tool(AnnotationTool::Number) => (
+                "編號 · 點兩下物件可重編",
+                "Number · Double-click an object to edit",
+            ),
             ToolbarButton::Tool(AnnotationTool::Mosaic) => ("馬賽克", "Mosaic"),
             ToolbarButton::Tool(AnnotationTool::Eraser) => ("橡皮擦", "Eraser"),
             ToolbarButton::Range => ("移動或調整擷取範圍", "Move or resize capture area"),
@@ -3278,7 +3554,7 @@ mod platform {
         let brush = CreateSolidBrush(COLORREF(0x00FA_FAFA));
         FillRect(dc, &layout.bounds, brush);
         DeleteObject(brush.into());
-        for (index, button) in TOOLBAR_BUTTONS.iter().copied().enumerate() {
+        for (index, button) in state.toolbar_buttons().iter().copied().enumerate() {
             let bounds = layout.button(index);
             let (icon, selected, enabled) = match button {
                 ToolbarButton::Capture => (10, false, true),
@@ -3309,7 +3585,7 @@ mod platform {
                 ToolbarButton::Undo => (
                     9,
                     false,
-                    !state.undo_annotations.is_empty() || state.text_input.is_some(),
+                    !state.undo_annotations.is_empty() || state.editing_value(),
                 ),
                 ToolbarButton::Redo => (19, false, !state.redo_annotations.is_empty()),
                 ToolbarButton::Delete => (20, false, state.selected_annotation.is_some()),
@@ -3336,6 +3612,27 @@ mod platform {
                     &text,
                 );
             }
+        }
+        if state.long_capture.is_none() {
+            let first_annotation = layout.button(CAPTURE_BUTTON_COUNT);
+            let separator = if CAPTURE_BUTTON_COUNT as i32 % layout.columns == 0 {
+                RECT {
+                    left: layout.bounds.left + 7,
+                    top: first_annotation.top,
+                    right: layout.bounds.right - 7,
+                    bottom: first_annotation.top + 1,
+                }
+            } else {
+                RECT {
+                    left: first_annotation.left,
+                    top: first_annotation.top + 8,
+                    right: first_annotation.left + 1,
+                    bottom: first_annotation.bottom - 8,
+                }
+            };
+            let brush = CreateSolidBrush(COLORREF(0x0082_7570));
+            FillRect(dc, &separator, brush);
+            DeleteObject(brush.into());
         }
     }
 
@@ -3707,6 +4004,9 @@ mod platform {
     }
 
     fn render_annotations(state: &SelectorState, scratch: &mut Vec<u8>) -> Option<RectInfo> {
+        if state.long_capture.is_some() {
+            return None;
+        }
         let selection = state.selection?;
         let mut annotations: Vec<NativeAnnotation> = state
             .annotations
@@ -4507,6 +4807,9 @@ mod platform {
     }
 
     fn cursor_for_point(point: (i32, i32), state: &SelectorState) -> windows::core::PCWSTR {
+        if state.long_capture.is_some() {
+            return IDC_ARROW;
+        }
         if let Some(selection) = state.selection {
             let toolbar = annotation_toolbar_layout(selection, state).bounds;
             let radius_button = radius_button_rect(selection, state.width, state.height);
