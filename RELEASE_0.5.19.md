@@ -7,4 +7,11 @@
 
 - 前端建置、12 項瀏覽器回歸測試、Rust 格式檢查及差異檢查通過，包含主編輯器裁切及復原重做。
 - 數字採 #252525 白底 #FFFFFF，對比約 15.33:1。箭頭前景 #252525，預設背景 #F2F4F1、滑過背景 #E0EDE6，對比皆高於 4.5:1。
-- Windows 免安裝版待建置。實機驗收包含工具列按鈕配置、上下箭頭調整及範圍控制點拖曳。
+- Windows 免安裝版實測確認已移除裁切圖示。上下箭頭可調整目前物件和新筆畫的筆寬，實測輸出兩條可編輯線條分別為 5 和 4 像素。選取繪圖工具期間仍能拖曳框線與控制點，移動及縮放後的 380 × 252 擷圖逐像素符合測試畫面。主編輯器仍有裁切。測試還原並比對 253 份原有資料檔案的 SHA-256。
+
+## 測試版下載
+
+- [Windows 免安裝測試版 ZIP](https://github.com/harmonica80/captureflow/actions/runs/45651718408/artifacts/15041152014) · [GitHub Actions 建置紀錄](https://github.com/harmonica80/captureflow/actions/runs/45651718408)
+- GitHub 下載需要登入，成品保存至 2027 年 2 月 24 日 00:11（臺灣時間）。
+- ZIP 內為 `CaptureFlow-portable.exe`，版本 0.5.19，來源提交 `1d69244`，大小 6,752,256 bytes。
+- EXE 的 SHA-256 為 `54A634B1D7478BAB7D0724BCADCB87C67C1C688ABCC2BE23E97B3C3458F9B9D3`，已與 Actions 紀錄核對。

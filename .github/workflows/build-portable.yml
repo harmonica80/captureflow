@@ -3,7 +3,7 @@ name: Build portable EXE
 on:
   workflow_dispatch:
   push:
-    branches: [main, codex/selector-spinner-v0519]
+    branches: [main]
     paths:
       - "captureflow/**"
       - ".github/workflows/build-portable.yml"
