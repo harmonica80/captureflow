@@ -1,5 +1,5 @@
 import "./App.css";
-import AnnotationEditor, { type AnnotationObject, type EditorHandle } from "./AnnotationEditor";
+import AnnotationEditor, { type AnnotationObject, type EditableStickerDocument, type EditorHandle } from "./AnnotationEditor";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -24,6 +24,8 @@ type SelectionSnapshot = {
   width: number;
   height: number;
   cornerRadius?: number;
+  objects?: AnnotationObject[];
+  stickerId?: number;
 };
 type SettingsView = {
   captureShortcut: string;
@@ -185,7 +187,7 @@ export default function App() {
     originalImage.current = captured.imagePath;
     selectionOrigin.current = { x: captured.selection.x, y: captured.selection.y };
     setSelection(captured);
-    setObjects([]);
+    setObjects(captured.objects ?? []);
     setEditorKey((k) => k + 1);
     setMessage(`擷圖已載入編輯器，並加入最近 ${settings?.historyLimit ?? 20} 筆歷史`);
     setError("");
@@ -246,9 +248,13 @@ export default function App() {
     const failed = listen<string>("captureflow://selection-error", (event) =>
       setError(event.payload),
     );
+    const editSticker = listen<{ id: number; projectPath: string }>("captureflow://edit-sticker", ({ payload }) =>
+      void loadProjectPath(payload.projectPath, false, payload.id),
+    );
     return () => {
       void completed.then((fn) => fn());
       void failed.then((fn) => fn());
+      void editSticker.then((fn) => fn());
     };
   }, []);
 
@@ -262,7 +268,7 @@ export default function App() {
     return () => { void listener.then((unlisten) => unlisten()); };
   }, []);
 
-  async function loadProjectPath(projectPath: string, fromHistory = false) {
+  async function loadProjectPath(projectPath: string, fromHistory = false, stickerId?: number) {
     return withSavedEditor(async () => {
       setBusy("project");
       setError("");
@@ -278,6 +284,7 @@ export default function App() {
           selection: { x: 0, y: 0, width: p.canvasWidth, height: p.canvasHeight },
           width: p.canvasWidth,
           height: p.canvasHeight,
+          stickerId,
         });
         setObjects(p.objects);
         selectionOrigin.current = { x: 0, y: 0 };
@@ -376,16 +383,22 @@ export default function App() {
       setError(String(reason));
     }
   }
-  async function openSticker(path?: string) {
+  async function openSticker(imagePath: string, document: EditableStickerDocument) {
     if (!selection) return;
     try {
-      await invoke("open_sticker", {
-        imagePath: path ?? selection.imagePath,
+      const stickerId = await invoke<number>("open_sticker", {
+        imagePath,
         x: selection.selection.x,
         y: selection.selection.y,
+        document,
+        stickerId: selection.stickerId,
       });
-      setMessage("已建立置頂貼圖");
+      setSelection((current) => current?.metadataPath === selection.metadataPath ? { ...current, stickerId } : current);
+      setMessage(selection.stickerId ? "已更新置頂貼圖" : "已建立置頂貼圖");
     } catch (reason) {
+      if (String(reason).includes("這張貼圖已關閉")) {
+        setSelection((current) => current?.metadataPath === selection.metadataPath ? { ...current, stickerId: undefined } : current);
+      }
       setError(String(reason));
     }
   }
@@ -643,6 +656,7 @@ export default function App() {
               onCopy={copySelection}
               onSave={saveSelection}
               onSticker={openSticker}
+              editingSticker={selection.stickerId !== undefined}
               onDocumentChange={(result) => {
                 setSelection((current) =>
                   current

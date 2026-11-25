@@ -18,6 +18,8 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 pub struct StickerRecord {
     pub id: u64,
     pub image_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
     pub x: i32,
     pub y: i32,
     pub width: i32,

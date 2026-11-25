@@ -53,8 +53,24 @@ async fn capture_monitor(
 }
 
 #[tauri::command]
-fn open_sticker(app: tauri::AppHandle, image_path: String, x: i32, y: i32) -> Result<(), String> {
-    sticker::open(&app, image_path, x, y)
+async fn open_sticker(
+    app: tauri::AppHandle,
+    image_path: String,
+    x: i32,
+    y: i32,
+    document: Option<sticker::EditableDocument>,
+    sticker_id: Option<u64>,
+) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(id) = sticker_id {
+            sticker::update(&app, id, image_path, document.ok_or("缺少貼圖編輯資料。")?)?;
+            Ok(id)
+        } else {
+            sticker::open(&app, image_path, x, y, document)
+        }
+    })
+    .await
+    .map_err(|error| format!("貼圖處理執行緒異常結束：{error}"))?
 }
 
 #[tauri::command]

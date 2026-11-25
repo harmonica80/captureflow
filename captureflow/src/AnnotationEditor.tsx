@@ -77,6 +77,12 @@ type Annotation =
   | TextObject
   | NumberObject;
 export type AnnotationObject = Annotation;
+export type EditableStickerDocument = {
+  sourceImage: string;
+  canvasWidth: number;
+  canvasHeight: number;
+  objects: AnnotationObject[];
+};
 type DocumentSnapshot = ImageDocument<Annotation>;
 export type EditorHandle = { flush: () => Promise<void> };
 type Props = {
@@ -88,7 +94,8 @@ type Props = {
   initialObjects?: Annotation[];
   onCopy: (imagePath?: string) => Promise<void>;
   onSave: (imagePath?: string) => Promise<void>;
-  onSticker: (imagePath?: string) => Promise<void>;
+  onSticker: (imagePath: string, document: EditableStickerDocument) => Promise<void>;
+  editingSticker?: boolean;
   onDocumentChange: (document: DocumentSnapshot) => void;
   onClose: () => void;
   onStatus: (message: string, isError?: boolean) => void;
@@ -443,6 +450,7 @@ export default function AnnotationEditor({
   onCopy,
   onSave,
   onSticker,
+  editingSticker = false,
   onDocumentChange,
   onClose,
   onStatus,
@@ -492,7 +500,8 @@ export default function AnnotationEditor({
     [italic, setItalic] = useState(false),
     [outlineColor, setOutlineColor] = useState("#ffffff"),
     [outlineWidth, setOutlineWidth] = useState(1),
-    [nextNumber, setNextNumber] = useState(1),
+    [nextNumber, setNextNumber] = useState(() =>
+      initialObjects.reduce((next, object) => object.type === "number" ? Math.max(next, object.number + 1) : next, 1)),
     [numberSize, setNumberSize] = useState(40),
     [mosaicBlock, setMosaicBlock] = useState(18),
     [loading, setLoading] = useState(true),
@@ -1441,9 +1450,18 @@ export default function AnnotationEditor({
     if (path) await onCopy(path);
   }
   async function applyAndSticker() {
+    const document = currentDocument();
     const path = await createComposite();
-    if (path) await onSticker(path);
+    if (path) await onSticker(path, {
+      sourceImage: document.imagePath,
+      canvasWidth: document.width,
+      canvasHeight: document.height,
+      objects: document.objects,
+    });
   }
+  const stickerLabel = editingSticker
+    ? (language === "en" ? "Update pinned sticker" : "更新置頂貼圖")
+    : (language === "en" ? "Pin annotated image" : "套用標註並建立置頂貼圖");
   const shownObjects = useMemo(() => objects, [objects]);
   return (
     <section className="annotation-editor" inert={saving} aria-busy={saving || loading}>
@@ -1495,8 +1513,8 @@ export default function AnnotationEditor({
             className="action-icon"
             onClick={applyAndSticker}
             disabled={saving || loading}
-            title="套用標註並建立置頂貼圖"
-            aria-label="套用標註並建立置頂貼圖"
+            title={stickerLabel}
+            aria-label={stickerLabel}
           >
             <ActionIcon type="pin" />
           </button>

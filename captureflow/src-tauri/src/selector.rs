@@ -14,6 +14,9 @@ pub struct SelectionSnapshot {
     pub width: i32,
     pub height: i32,
     pub corner_radius: i32,
+    pub objects: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sticker_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -36,7 +39,7 @@ struct LongCaptureResult {
     height: i32,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum LineStyle {
     #[default]
@@ -179,45 +182,61 @@ pub async fn select_area(
         width: local_selection.width,
         height: local_selection.height,
     };
-    let mut snapshot = save_selection(
-        &app,
-        &frame,
-        local_selection,
-        global_selection,
-        selected.corner_radius,
-        &selected.annotations,
-    )?;
-    if let Some(long) = selected.long_capture {
+    let (mut rgba, width, height) = if let Some(long) = selected.long_capture {
         let mut rgba = long.bgra;
         for pixel in rgba.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
-        let long_selection = RectInfo {
-            width: long.width,
-            height: long.height,
-            ..local_selection
-        };
-        apply_native_annotations(&mut rgba, long_selection, &selected.annotations);
-        apply_rounded_alpha(&mut rgba, long.width, long.height, selected.corner_radius);
-        image::save_buffer_with_format(
-            &snapshot.image_path,
-            &rgba,
-            long.width as u32,
-            long.height as u32,
-            image::ColorType::Rgba8,
-            image::ImageFormat::Png,
+        (rgba, long.width, long.height)
+    } else {
+        (
+            crop_rgba(
+                &frame.rgba,
+                virtual_desktop.width,
+                virtual_desktop.height,
+                local_selection,
+            )?,
+            local_selection.width,
+            local_selection.height,
         )
-        .map_err(|error| format!("無法儲存長擷圖：{error}"))?;
-        snapshot.height = long.height;
-    }
+    };
+    apply_rounded_alpha(&mut rgba, width, height, selected.corner_radius);
+    let mut snapshot = write_selection(
+        &app,
+        &frame,
+        global_selection,
+        selected.corner_radius,
+        width,
+        height,
+        &rgba,
+    )?;
+    snapshot.objects = editor_objects(&selected.annotations, local_selection);
     save_last_selection(&app, global_selection, selected.corner_radius)?;
     if selected.pin {
-        crate::sticker::open(
+        apply_native_annotations(
+            &mut rgba,
+            RectInfo {
+                width,
+                height,
+                ..local_selection
+            },
+            &selected.annotations,
+        );
+        apply_rounded_alpha(&mut rgba, width, height, selected.corner_radius);
+        let preview_path =
+            crate::annotation::save_composited_image(&app, width as u32, height as u32, rgba)?;
+        snapshot.sticker_id = Some(crate::sticker::open(
             &app,
-            snapshot.image_path.clone(),
+            preview_path,
             global_selection.x,
             global_selection.y,
-        )?;
+            Some(crate::sticker::EditableDocument {
+                source_image: snapshot.image_path.clone(),
+                canvas_width: width as u32,
+                canvas_height: height as u32,
+                objects: serde_json::Value::Array(snapshot.objects.clone()),
+            }),
+        )?);
     }
     Ok(Some(snapshot))
 }
@@ -279,7 +298,6 @@ fn recapture_area(
         local_selection,
         global_selection,
         corner_radius,
-        &[],
     )
 }
 
@@ -317,7 +335,7 @@ pub fn capture_monitor(app: AppHandle, device_name: &str) -> Result<SelectionSna
         width: global_selection.width,
         height: global_selection.height,
     };
-    let snapshot = save_selection(&app, &frame, local_selection, global_selection, 0, &[])?;
+    let snapshot = save_selection(&app, &frame, local_selection, global_selection, 0)?;
     save_last_selection(&app, global_selection, 0)?;
     Ok(snapshot)
 }
@@ -328,7 +346,6 @@ fn save_selection(
     local_selection: RectInfo,
     global_selection: RectInfo,
     corner_radius: i32,
-    annotations: &[NativeAnnotation],
 ) -> Result<SelectionSnapshot, String> {
     let mut cropped = crop_rgba(
         &frame.rgba,
@@ -336,7 +353,6 @@ fn save_selection(
         frame.virtual_desktop.height,
         local_selection,
     )?;
-    apply_native_annotations(&mut cropped, local_selection, annotations);
     apply_rounded_alpha(
         &mut cropped,
         local_selection.width,
@@ -344,6 +360,26 @@ fn save_selection(
         corner_radius,
     );
 
+    write_selection(
+        app,
+        frame,
+        global_selection,
+        corner_radius,
+        local_selection.width,
+        local_selection.height,
+        &cropped,
+    )
+}
+
+fn write_selection(
+    app: &AppHandle,
+    frame: &crate::capture::DesktopFrame,
+    global_selection: RectInfo,
+    corner_radius: i32,
+    width: i32,
+    height: i32,
+    rgba: &[u8],
+) -> Result<SelectionSnapshot, String> {
     let captured_at_unix_ms = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|error| format!("無法取得系統時間：{error}"))?
@@ -359,9 +395,9 @@ fn save_selection(
     let metadata_path = output_dir.join(format!("selection-{captured_at_unix_ms}.json"));
     image::save_buffer_with_format(
         &image_path,
-        &cropped,
-        local_selection.width as u32,
-        local_selection.height as u32,
+        rgba,
+        width as u32,
+        height as u32,
         image::ColorType::Rgba8,
         image::ImageFormat::Png,
     )
@@ -386,9 +422,11 @@ fn save_selection(
         image_path: path_string(image_path),
         metadata_path: path_string(metadata_path),
         selection: global_selection,
-        width: local_selection.width,
-        height: local_selection.height,
+        width,
+        height,
         corner_radius,
+        objects: Vec::new(),
+        sticker_id: None,
     })
 }
 
@@ -455,7 +493,13 @@ fn apply_native_annotations(
     ) else {
         return;
     };
-    for annotation in annotations {
+    let is_mosaic =
+        |annotation: &&NativeAnnotation| matches!(annotation, NativeAnnotation::Mosaic { .. });
+    for annotation in annotations.iter().filter(is_mosaic).chain(
+        annotations
+            .iter()
+            .filter(|annotation| !is_mosaic(annotation)),
+    ) {
         match *annotation {
             NativeAnnotation::Rectangle {
                 start_x,
@@ -1074,6 +1118,62 @@ fn colorref_to_rgba(color: u32) -> [u8; 4] {
     ]
 }
 
+fn editor_objects(annotations: &[NativeAnnotation], area: RectInfo) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    let x = |position: i32| position - area.x;
+    let y = |position: i32| position - area.y;
+    let hex = |color| {
+        let [r, g, b, _] = colorref_to_rgba(color);
+        format!("#{r:02x}{g:02x}{b:02x}")
+    };
+    let bounds = |x1: i32, y1: i32, x2: i32, y2: i32| {
+        (
+            x(x1.min(x2)),
+            y(y1.min(y2)),
+            x1.abs_diff(x2),
+            y1.abs_diff(y2),
+        )
+    };
+    annotations.iter().enumerate().map(|(index, annotation)| {
+        let mut object = match *annotation {
+            NativeAnnotation::Rectangle { start_x, start_y, end_x, end_y, stroke_width, color, style }
+            | NativeAnnotation::Ellipse { start_x, start_y, end_x, end_y, stroke_width, color, style } => {
+                let (x, y, width, height) = bounds(start_x, start_y, end_x, end_y);
+                let kind = if matches!(annotation, NativeAnnotation::Rectangle { .. }) { "rectangle" } else { "ellipse" };
+                json!({"type": kind, "x": x, "y": y, "width": width, "height": height,
+                    "color": hex(color), "strokeWidth": stroke_width, "lineStyle": style})
+            }
+            NativeAnnotation::Arrow { start_x, start_y, end_x, end_y, stroke_width, color, style, headed, control_x, control_y } => {
+                let kind = if headed { "arrow" } else { "line" };
+                json!({"type": kind, "x1": x(start_x), "y1": y(start_y), "x2": x(end_x), "y2": y(end_y),
+                    "cx": x(control_x), "cy": y(control_y), "color": hex(color), "strokeWidth": stroke_width, "lineStyle": style})
+            }
+            NativeAnnotation::Freehand { points_x, points_y, length, stroke_width, color, style } => {
+                let points: Vec<_> = points_x.iter().zip(points_y.iter()).take(length)
+                    .map(|(&px,&py)| json!({"x": x(px), "y": y(py)})).collect();
+                json!({"type": "pen", "points": points, "color": hex(color),
+                    "strokeWidth": stroke_width, "lineStyle": style})
+            }
+            NativeAnnotation::Text { x: px, y: py, text, length, font_size, color, outline_color, outline_width } => {
+                json!({"type": "text", "x": x(px), "y": y(py), "text": String::from_utf16_lossy(&text[..length.min(text.len())]),
+                    "fontSize": font_size, "fontFamily": "Microsoft JhengHei", "bold": false, "italic": false, "color": hex(color),
+                    "strokeWidth": 1, "outlineColor": hex(outline_color), "outlineWidth": outline_width})
+            }
+            NativeAnnotation::Number { x: px, y: py, number, size, color } => {
+                json!({"type": "number", "x": x(px), "y": y(py), "number": number, "size": size,
+                    "color": hex(color), "strokeWidth": 1})
+            }
+            NativeAnnotation::Mosaic { start_x, start_y, end_x, end_y, block_size } => {
+                let (x, y, width, height) = bounds(start_x, start_y, end_x, end_y);
+                json!({"type": "mosaic", "x": x, "y": y, "width": width, "height": height,
+                    "blockSize": block_size, "color": "#000000", "strokeWidth": 1})
+            }
+        };
+        object["id"] = json!(format!("capture-{index}"));
+        object
+    }).collect()
+}
+
 fn apply_rounded_alpha(pixels: &mut [u8], width: i32, height: i32, radius: i32) {
     let radius = radius.clamp(0, width.min(height) / 2);
     if radius == 0 {
@@ -1140,11 +1240,11 @@ fn path_string(path: PathBuf) -> String {
 mod platform {
     use super::{
         apply_native_annotations, best_vertical_overlap, crop_rgba, curved_arrow_points,
-        frame_difference, pixelate_rgba_region, tapered_arrow_points, LineStyle, LongCaptureResult,
-        NativeAnnotation, SelectedArea,
+        frame_difference, tapered_arrow_points, LineStyle, LongCaptureResult, NativeAnnotation,
+        SelectedArea,
     };
     use crate::capture::RectInfo;
-    use std::{mem::size_of, sync::mpsc};
+    use std::{cell::RefCell, collections::HashMap, mem::size_of, sync::mpsc};
     use windows::{
         core::{w, PCWSTR},
         Win32::{
@@ -1155,8 +1255,8 @@ mod platform {
                 GetStockObject, InvalidateRect, LineTo, MoveToEx, Polygon, Rectangle, RoundRect,
                 SelectObject, SetBkMode, SetTextColor, StretchDIBits, TextOutW, BITMAPINFO,
                 BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, FONT_CHARSET, FONT_CLIP_PRECISION,
-                FONT_OUTPUT_PRECISION, FONT_QUALITY, NULL_BRUSH, NULL_PEN, PAINTSTRUCT, PS_DOT,
-                PS_SOLID, SRCCOPY, TRANSPARENT,
+                FONT_OUTPUT_PRECISION, FONT_QUALITY, HBITMAP, HDC, HGDIOBJ, NULL_BRUSH, NULL_PEN,
+                PAINTSTRUCT, PS_DOT, PS_SOLID, SRCCOPY, TRANSPARENT,
             },
             System::LibraryLoader::GetModuleHandleW,
             UI::{
@@ -1432,6 +1532,21 @@ mod platform {
     const TOOL_SIZE: i32 = 44;
 
     impl SelectorState {
+        fn append_freehand_point(&mut self, point: (i32, i32)) {
+            if self.freehand_points.last() == Some(&point) {
+                return;
+            }
+            if self.freehand_points.len() == 128 {
+                let mut index = 0;
+                self.freehand_points.retain(|_| {
+                    let keep = index % 2 == 0 || index == 127;
+                    index += 1;
+                    keep
+                });
+            }
+            self.freehand_points.push(point);
+        }
+
         fn tool_thickness(&self) -> i32 {
             match self.annotation_tool {
                 Some(AnnotationTool::Text) => (self.stroke_width * 2 + 16).clamp(8, 160),
@@ -1597,6 +1712,8 @@ mod platform {
         });
 
         let result = unsafe { run_window(virtual_desktop) };
+        PAINT_BUFFER.with(|buffer| *buffer.borrow_mut() = None);
+        TOOL_ICONS.with(|icons| icons.borrow_mut().clear());
         if let Err(error) = result {
             *STATE.lock().map_err(|_| "選取狀態清理失敗")? = None;
             return Err(error);
@@ -2075,11 +2192,7 @@ mod platform {
                                 ..
                             } = interaction
                             {
-                                if state.freehand_points.last().copied() != Some(current)
-                                    && state.freehand_points.len() < 128
-                                {
-                                    state.freehand_points.push(current);
-                                }
+                                state.append_freehand_point(current);
                             }
                             if let Interaction::MoveAnnotation {
                                 index,
@@ -2168,11 +2281,8 @@ mod platform {
                                 if (current.0 - start.0).abs() >= 3
                                     || (current.1 - start.1).abs() >= 3
                                 {
-                                    if tool == AnnotationTool::Freehand
-                                        && state.freehand_points.len() < 128
-                                        && state.freehand_points.last().copied() != Some(current)
-                                    {
-                                        state.freehand_points.push(current);
+                                    if tool == AnnotationTool::Freehand {
+                                        state.append_freehand_point(current);
                                     }
                                     if let Some(annotation) =
                                         draft_annotation(state, tool, start, current)
@@ -2406,184 +2516,277 @@ mod platform {
         }
     }
 
+    struct PaintLayer {
+        dc: HDC,
+        bitmap: HBITMAP,
+        previous: HGDIOBJ,
+    }
+
+    impl PaintLayer {
+        unsafe fn new(screen: HDC, width: i32, height: i32) -> Option<Self> {
+            let dc = CreateCompatibleDC(Some(screen));
+            if dc.0.is_null() {
+                return None;
+            }
+            let bitmap = CreateCompatibleBitmap(screen, width, height);
+            if bitmap.0.is_null() {
+                let _ = DeleteDC(dc);
+                return None;
+            }
+            let previous = SelectObject(dc, bitmap.into());
+            Some(Self {
+                dc,
+                bitmap,
+                previous,
+            })
+        }
+    }
+
+    impl Drop for PaintLayer {
+        fn drop(&mut self) {
+            unsafe {
+                SelectObject(self.dc, self.previous);
+                DeleteObject(self.bitmap.into());
+                let _ = DeleteDC(self.dc);
+            }
+        }
+    }
+
+    struct PaintBuffer {
+        foreground: PaintLayer,
+        background: PaintLayer,
+        background_valid: bool,
+        dimensions: (i32, i32),
+        annotation_pixels: Vec<u8>,
+    }
+
+    impl PaintBuffer {
+        unsafe fn new(screen: HDC, width: i32, height: i32) -> Option<Self> {
+            Some(Self {
+                foreground: PaintLayer::new(screen, width, height)?,
+                background: PaintLayer::new(screen, width, height)?,
+                background_valid: false,
+                dimensions: (width, height),
+                annotation_pixels: Vec::new(),
+            })
+        }
+    }
+
+    thread_local! {
+        static PAINT_BUFFER: RefCell<Option<PaintBuffer>> = const { RefCell::new(None) };
+    }
+
+    unsafe fn draw_bgra(dc: HDC, rect: RectInfo, pixels: &[u8]) {
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: rect.width,
+                biHeight: -rect.height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        StretchDIBits(
+            dc,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            0,
+            0,
+            rect.width,
+            rect.height,
+            Some(pixels.as_ptr().cast()),
+            &info,
+            DIB_RGB_COLORS,
+            SRCCOPY,
+        );
+    }
+
     unsafe fn paint(hwnd: HWND) {
         let mut paint = PAINTSTRUCT::default();
         let screen_dc = BeginPaint(hwnd, &mut paint);
         if let Ok(mut guard) = STATE.lock() {
             if let Some(state) = guard.as_mut() {
-                let dc = CreateCompatibleDC(Some(screen_dc));
-                let bitmap = CreateCompatibleBitmap(screen_dc, state.width, state.height);
-                let old_bitmap = SelectObject(dc, bitmap.into());
-                let visible_rect = state
-                    .selection
-                    .or(state.hover_candidate)
-                    .filter(|rect| rect.width > 0 && rect.height > 0);
-                update_composite(state, visible_rect);
-                let info = BITMAPINFO {
-                    bmiHeader: BITMAPINFOHEADER {
-                        biSize: size_of::<BITMAPINFOHEADER>() as u32,
-                        biWidth: state.width,
-                        biHeight: -state.height,
-                        biPlanes: 1,
-                        biBitCount: 32,
-                        biCompression: BI_RGB.0,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-                let mut rendered_bgra = state.composite_bgra.clone();
-                composite_vector_annotations(&mut rendered_bgra, state);
-                StretchDIBits(
-                    dc,
-                    0,
-                    0,
-                    state.width,
-                    state.height,
-                    0,
-                    0,
-                    state.width,
-                    state.height,
-                    Some(rendered_bgra.as_ptr().cast()),
-                    &info,
-                    DIB_RGB_COLORS,
-                    SRCCOPY,
-                );
+                PAINT_BUFFER.with(|slot| {
+                    let mut slot = slot.borrow_mut();
+                    if slot.as_ref().map(|buffer| buffer.dimensions)
+                        != Some((state.width, state.height))
+                    {
+                        *slot = PaintBuffer::new(screen_dc, state.width, state.height);
+                    }
+                    let Some(buffer) = slot.as_mut() else { return };
+                    let dc = buffer.foreground.dc;
+                    let visible_rect = state
+                        .selection
+                        .or(state.hover_candidate)
+                        .filter(|rect| rect.width > 0 && rect.height > 0);
+                    if update_composite(state, visible_rect) || !buffer.background_valid {
+                        draw_bgra(
+                            buffer.background.dc,
+                            RectInfo {
+                                x: 0,
+                                y: 0,
+                                width: state.width,
+                                height: state.height,
+                            },
+                            &state.composite_bgra,
+                        );
+                        buffer.background_valid = true;
+                    }
+                    let _ = BitBlt(
+                        dc,
+                        0,
+                        0,
+                        state.width,
+                        state.height,
+                        Some(buffer.background.dc),
+                        0,
+                        0,
+                        SRCCOPY,
+                    );
+                    if let Some(bounds) = render_annotations(state, &mut buffer.annotation_pixels) {
+                        draw_bgra(dc, bounds, &buffer.annotation_pixels);
+                    }
 
-                SetBkMode(dc, TRANSPARENT);
-                SetTextColor(dc, COLORREF(0x00F0_FFFF));
-                if state.selection.is_none() {
-                    let instructions: Vec<u16> =
+                    SetBkMode(dc, TRANSPARENT);
+                    SetTextColor(dc, COLORREF(0x00F0_FFFF));
+                    if state.selection.is_none() {
+                        let instructions: Vec<u16> =
                         "移動游標偵測視窗 · 拖曳自由框選 · 滾輪調整圓角 · 方向鍵微調 · Enter 確認"
                             .encode_utf16()
                             .collect();
-                    TextOutW(dc, 24, 24, &instructions);
-                }
+                        TextOutW(dc, 24, 24, &instructions);
+                    }
 
-                if let Some(rect) = state.selection.or(state.hover_candidate) {
-                    if rect.width > 0 && rect.height > 0 {
-                        let pen = CreatePen(PS_SOLID, 3, COLORREF(0x0074_E7AD));
-                        let old_pen = SelectObject(dc, pen.into());
-                        let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-                        RoundRect(
-                            dc,
-                            rect.x,
-                            rect.y,
-                            rect.x + rect.width,
-                            rect.y + rect.height,
-                            state.corner_radius * 2,
-                            state.corner_radius * 2,
-                        );
-                        SelectObject(dc, old_brush);
-                        SelectObject(dc, old_pen);
-                        DeleteObject(pen.into());
+                    if let Some(rect) = state.selection.or(state.hover_candidate) {
+                        if rect.width > 0 && rect.height > 0 {
+                            let pen = CreatePen(PS_SOLID, 3, COLORREF(0x0074_E7AD));
+                            let old_pen = SelectObject(dc, pen.into());
+                            let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                            RoundRect(
+                                dc,
+                                rect.x,
+                                rect.y,
+                                rect.x + rect.width,
+                                rect.y + rect.height,
+                                state.corner_radius * 2,
+                                state.corner_radius * 2,
+                            );
+                            SelectObject(dc, old_brush);
+                            SelectObject(dc, old_pen);
+                            DeleteObject(pen.into());
 
-                        if state.selection.is_some() {
-                            let handle_brush = CreateSolidBrush(COLORREF(0x00FF_FFFF));
-                            let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
-                            let old_brush = SelectObject(dc, handle_brush.into());
-                            for (x, y) in handle_points(rect) {
-                                Rectangle(dc, x - 5, y - 5, x + 6, y + 6);
+                            if state.selection.is_some() {
+                                let handle_brush = CreateSolidBrush(COLORREF(0x00FF_FFFF));
+                                let old_pen = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                                let old_brush = SelectObject(dc, handle_brush.into());
+                                for (x, y) in handle_points(rect) {
+                                    Rectangle(dc, x - 5, y - 5, x + 6, y + 6);
+                                }
+                                SelectObject(dc, old_brush);
+                                SelectObject(dc, old_pen);
+                                DeleteObject(handle_brush.into());
+
+                                let button = radius_button_rect(rect, state.width, state.height);
+                                let button_brush = CreateSolidBrush(COLORREF(0x00FF_7B18));
+                                let old_brush = SelectObject(dc, button_brush.into());
+                                let button_pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FF_FFFF));
+                                let old_pen = SelectObject(dc, button_pen.into());
+                                RoundRect(
+                                    dc,
+                                    button.left,
+                                    button.top,
+                                    button.right,
+                                    button.bottom,
+                                    12,
+                                    12,
+                                );
+                                let inset = 11;
+                                RoundRect(
+                                    dc,
+                                    button.left + inset,
+                                    button.top + inset,
+                                    button.right - inset,
+                                    button.bottom - inset,
+                                    8,
+                                    8,
+                                );
+                                SelectObject(dc, old_pen);
+                                SelectObject(dc, old_brush);
+                                DeleteObject(button_pen.into());
+                                DeleteObject(button_brush.into());
+
+                                draw_long_preview(dc, state, rect);
                             }
-                            SelectObject(dc, old_brush);
-                            SelectObject(dc, old_pen);
-                            DeleteObject(handle_brush.into());
 
-                            let button = radius_button_rect(rect, state.width, state.height);
-                            let button_brush = CreateSolidBrush(COLORREF(0x00FF_7B18));
-                            let old_brush = SelectObject(dc, button_brush.into());
-                            let button_pen = CreatePen(PS_SOLID, 2, COLORREF(0x00FF_FFFF));
-                            let old_pen = SelectObject(dc, button_pen.into());
-                            RoundRect(
-                                dc,
-                                button.left,
-                                button.top,
-                                button.right,
-                                button.bottom,
-                                12,
-                                12,
-                            );
-                            let inset = 11;
-                            RoundRect(
-                                dc,
-                                button.left + inset,
-                                button.top + inset,
-                                button.right - inset,
-                                button.bottom - inset,
-                                8,
-                                8,
-                            );
-                            SelectObject(dc, old_pen);
-                            SelectObject(dc, old_brush);
-                            DeleteObject(button_pen.into());
-                            DeleteObject(button_brush.into());
-
-                            draw_long_preview(dc, state, rect);
+                            let dimensions = if let Some(long) = state.long_capture.as_ref() {
+                                format!(
+                                    "長擷圖：請向下滾動 · {} × {} px",
+                                    long.width,
+                                    long.stitched_bgra.len() / (long.width * 4)
+                                )
+                            } else {
+                                format!(
+                                    "{} × {} px · 圓角 {} px",
+                                    rect.width, rect.height, state.corner_radius
+                                )
+                            };
+                            let dimensions: Vec<u16> = dimensions.encode_utf16().collect();
+                            let label_y = if rect.y >= 34 {
+                                rect.y - 28
+                            } else {
+                                (rect.y + rect.height + 10).min(state.height - 22)
+                            };
+                            let label_width = dimensions.len() as i32 * 10 + 12;
+                            let label_x = rect.x.clamp(0, (state.width - label_width).max(0));
+                            let label = RECT {
+                                left: label_x,
+                                top: label_y,
+                                right: label_x + label_width,
+                                bottom: label_y + 22,
+                            };
+                            let background = CreateSolidBrush(COLORREF(0x0025_2525));
+                            FillRect(dc, &label, background);
+                            DeleteObject(background.into());
+                            SetTextColor(dc, COLORREF(0x00FA_FAFA));
+                            TextOutW(dc, label_x + 6, label_y + 2, &dimensions);
                         }
-
-                        let dimensions = if let Some(long) = state.long_capture.as_ref() {
-                            format!(
-                                "長擷圖：請向下滾動 · {} × {} px",
-                                long.width,
-                                long.stitched_bgra.len() / (long.width * 4)
-                            )
-                        } else {
-                            format!(
-                                "{} × {} px · 圓角 {} px",
-                                rect.width, rect.height, state.corner_radius
-                            )
-                        };
-                        let dimensions: Vec<u16> = dimensions.encode_utf16().collect();
-                        let label_y = if rect.y >= 34 {
-                            rect.y - 28
-                        } else {
-                            (rect.y + rect.height + 10).min(state.height - 22)
-                        };
-                        let label_width = dimensions.len() as i32 * 10 + 12;
-                        let label_x = rect.x.clamp(0, (state.width - label_width).max(0));
-                        let label = RECT {
-                            left: label_x,
-                            top: label_y,
-                            right: label_x + label_width,
-                            bottom: label_y + 22,
-                        };
-                        let background = CreateSolidBrush(COLORREF(0x0025_2525));
-                        FillRect(dc, &label, background);
-                        DeleteObject(background.into());
-                        SetTextColor(dc, COLORREF(0x00FA_FAFA));
-                        TextOutW(dc, label_x + 6, label_y + 2, &dimensions);
                     }
-                }
-                draw_native_annotations(dc, state);
-                draw_magnifier(dc, state);
-                if state.interaction.is_none()
-                    || matches!(state.interaction, Some(Interaction::Annotate { .. }))
-                {
-                    if let Some(rect) = state
-                        .selection
-                        .filter(|rect| rect.width >= 2 && rect.height >= 2)
+                    draw_native_annotations(dc, state);
+                    if state.selection.is_none() && state.interaction.is_none() {
+                        draw_magnifier(dc, state);
+                    }
+                    if state.interaction.is_none()
+                        || matches!(state.interaction, Some(Interaction::Annotate { .. }))
                     {
-                        draw_annotation_toolbar(dc, state, rect);
-                        if state.color_palette_open {
-                            draw_color_palette(dc, state, rect);
-                        } else if state.interaction.is_none() {
-                            draw_toolbar_hint(dc, state, rect);
+                        if let Some(rect) = state
+                            .selection
+                            .filter(|rect| rect.width >= 2 && rect.height >= 2)
+                        {
+                            draw_annotation_toolbar(dc, state, rect);
+                            if state.color_palette_open {
+                                draw_color_palette(dc, state, rect);
+                            } else if state.interaction.is_none() {
+                                draw_toolbar_hint(dc, state, rect);
+                            }
                         }
                     }
-                }
-                let _ = BitBlt(
-                    screen_dc,
-                    0,
-                    0,
-                    state.width,
-                    state.height,
-                    Some(dc),
-                    0,
-                    0,
-                    SRCCOPY,
-                );
-                SelectObject(dc, old_bitmap);
-                DeleteObject(bitmap.into());
-                let _ = DeleteDC(dc);
+                    let _ = BitBlt(
+                        screen_dc,
+                        0,
+                        0,
+                        state.width,
+                        state.height,
+                        Some(dc),
+                        0,
+                        0,
+                        SRCCOPY,
+                    );
+                });
             }
         }
         EndPaint(hwnd, &paint);
@@ -3204,8 +3407,21 @@ mod platform {
         DeleteObject(border.into());
     }
 
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
+    struct ToolIcon {
+        icon: usize,
+        background: [u8; 3],
+        ink: u8,
+        color: u32,
+        style: LineStyle,
+    }
+
+    thread_local! {
+        static TOOL_ICONS: RefCell<HashMap<ToolIcon, Vec<u8>>> = RefCell::new(HashMap::new());
+    }
+
     unsafe fn draw_toolbar_icon(
-        dc: windows::Win32::Graphics::Gdi::HDC,
+        dc: HDC,
         index: usize,
         left: i32,
         top: i32,
@@ -3213,13 +3429,18 @@ mod platform {
         selected: bool,
         enabled: bool,
     ) {
-        let Some(mut pixmap) = tiny_skia::Pixmap::new(44, 44) else {
+        if index == usize::MAX {
             return;
+        }
+        let bounds = RectInfo {
+            x: left,
+            y: top,
+            width: TOOL_SIZE,
+            height: TOOL_SIZE,
         };
-        pixmap.fill(if selected {
-            tiny_skia::Color::from_rgba8(155, 220, 255, 255)
+        let background = if selected {
+            [155, 220, 255]
         } else if enabled
-            && index != usize::MAX
             && point_in_rect(
                 state.cursor_position,
                 RECT {
@@ -3230,12 +3451,41 @@ mod platform {
                 },
             )
         {
-            tiny_skia::Color::from_rgba8(224, 237, 230, 255)
+            [224, 237, 230]
         } else {
-            tiny_skia::Color::from_rgba8(250, 250, 250, 255)
+            [250, 250, 250]
+        };
+        let icon = ToolIcon {
+            icon: index,
+            background,
+            ink: if enabled { 37 } else { 105 },
+            color: if index == 8 { state.current_color } else { 0 },
+            style: if index == 18 {
+                state.line_style
+            } else {
+                LineStyle::Solid
+            },
+        };
+        TOOL_ICONS.with(|icons| {
+            let mut icons = icons.borrow_mut();
+            let pixels = icons
+                .entry(icon)
+                .or_insert_with(|| render_toolbar_icon(icon));
+            if !pixels.is_empty() {
+                draw_bgra(dc, bounds, pixels);
+            }
         });
+    }
+
+    fn render_toolbar_icon(icon: ToolIcon) -> Vec<u8> {
+        let Some(mut pixmap) = tiny_skia::Pixmap::new(TOOL_SIZE as u32, TOOL_SIZE as u32) else {
+            return Vec::new();
+        };
+        let [r, g, b] = icon.background;
+        pixmap.fill(tiny_skia::Color::from_rgba8(r, g, b, 255));
+        let index = icon.icon;
         let mut paint = tiny_skia::Paint::default();
-        let ink = if enabled { 37 } else { 105 };
+        let ink = icon.ink;
         paint.set_color_rgba8(ink, ink, ink, 255);
         paint.anti_alias = true;
         let stroke = tiny_skia::Stroke {
@@ -3244,6 +3494,10 @@ mod platform {
             line_join: tiny_skia::LineJoin::Round,
             ..Default::default()
         };
+        let scale = 2.0 / 3.0;
+        let inset = TOOL_SIZE as f32 * (1.0 - scale) / 2.0;
+        let icon_transform =
+            tiny_skia::Transform::from_scale(scale, scale).post_translate(inset, inset);
         let mut path = tiny_skia::PathBuilder::new();
         match index {
             0 => {
@@ -3311,7 +3565,7 @@ mod platform {
             }
             8 => {
                 if let Some(rect) = tiny_skia::Rect::from_xywh(13.0, 13.0, 18.0, 18.0) {
-                    let rgba = super::colorref_to_rgba(state.current_color);
+                    let rgba = super::colorref_to_rgba(icon.color);
                     let mut fill = tiny_skia::Paint::default();
                     fill.set_color_rgba8(rgba[0], rgba[1], rgba[2], 255);
                     fill.anti_alias = true;
@@ -3322,7 +3576,7 @@ mod platform {
                             &swatch,
                             &fill,
                             tiny_skia::FillRule::Winding,
-                            tiny_skia::Transform::identity(),
+                            icon_transform,
                             None,
                         );
                         pixmap.stroke_path(
@@ -3332,7 +3586,7 @@ mod platform {
                                 width: 1.0,
                                 ..stroke.clone()
                             },
-                            tiny_skia::Transform::identity(),
+                            icon_transform,
                             None,
                         );
                     }
@@ -3409,8 +3663,8 @@ mod platform {
                     pixmap.stroke_path(
                         &line,
                         &paint,
-                        &super::skia_stroke(2, state.line_style),
-                        tiny_skia::Transform::identity(),
+                        &super::skia_stroke(2, icon.style),
+                        icon_transform,
                         None,
                     );
                 }
@@ -3442,55 +3696,18 @@ mod platform {
         }
         if index != 8 {
             if let Some(path) = path.finish() {
-                pixmap.stroke_path(
-                    &path,
-                    &paint,
-                    &stroke,
-                    tiny_skia::Transform::identity(),
-                    None,
-                );
+                pixmap.stroke_path(&path, &paint, &stroke, icon_transform, None);
             }
         }
         let mut bgra = pixmap.take();
         for pixel in bgra.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
-        let info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: 44,
-                biHeight: -44,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        StretchDIBits(
-            dc,
-            left,
-            top,
-            44,
-            44,
-            0,
-            0,
-            44,
-            44,
-            Some(bgra.as_ptr().cast()),
-            &info,
-            DIB_RGB_COLORS,
-            SRCCOPY,
-        );
+        bgra
     }
 
-    fn composite_vector_annotations(frame_bgra: &mut [u8], state: &SelectorState) {
-        let Some(selection) = state.selection else {
-            return;
-        };
-        if selection.width <= 0 || selection.height <= 0 {
-            return;
-        }
+    fn render_annotations(state: &SelectorState, scratch: &mut Vec<u8>) -> Option<RectInfo> {
+        let selection = state.selection?;
         let mut annotations: Vec<NativeAnnotation> = state
             .annotations
             .iter()
@@ -3498,68 +3715,77 @@ mod platform {
             .filter(|annotation| !matches!(annotation, NativeAnnotation::Text { .. }))
             .collect();
         if let Some(Interaction::Annotate { start, tool }) = state.interaction {
-            let (end_x, end_y) = state.cursor_position;
-            let draft = draft_annotation(state, tool, start, (end_x, end_y));
-            if let Some(draft) = draft {
+            if let Some(draft) = draft_annotation(state, tool, start, state.cursor_position) {
                 annotations.push(draft);
             }
         }
+        let mut left = selection.x + selection.width;
+        let mut top = selection.y + selection.height;
+        let mut right = selection.x;
+        let mut bottom = selection.y;
         for annotation in &annotations {
-            if let NativeAnnotation::Mosaic {
+            let bounds = if let NativeAnnotation::Arrow {
                 start_x,
                 start_y,
                 end_x,
                 end_y,
-                block_size,
+                headed: true,
+                control_x,
+                control_y,
+                ..
             } = *annotation
             {
-                pixelate_rgba_region(
-                    frame_bgra,
-                    state.width,
-                    state.height,
-                    start_x,
-                    start_y,
-                    end_x,
-                    end_y,
-                    block_size,
-                );
-            }
-        }
-        annotations.retain(|annotation| !matches!(annotation, NativeAnnotation::Mosaic { .. }));
-        if annotations.is_empty() {
-            return;
-        }
-        let mut overlay = vec![0u8; (selection.width * selection.height * 4) as usize];
-        apply_native_annotations(&mut overlay, selection, &annotations);
-        for local_y in 0..selection.height {
-            let global_y = selection.y + local_y;
-            if global_y < 0 || global_y >= state.height {
-                continue;
-            }
-            for local_x in 0..selection.width {
-                let global_x = selection.x + local_x;
-                if global_x < 0 || global_x >= state.width {
-                    continue;
+                let left = start_x.min(end_x).min(control_x);
+                let top = start_y.min(end_y).min(control_y);
+                RectInfo {
+                    x: left,
+                    y: top,
+                    width: start_x.max(end_x).max(control_x) - left,
+                    height: start_y.max(end_y).max(control_y) - top,
                 }
-                let source = ((local_y * selection.width + local_x) * 4) as usize;
-                let alpha = u16::from(overlay[source + 3]);
-                if alpha == 0 {
-                    continue;
-                }
-                let destination = ((global_y * state.width + global_x) * 4) as usize;
-                // tiny-skia stores premultiplied RGBA; the selector frame is opaque BGRA.
-                frame_bgra[destination] = (u16::from(overlay[source + 2])
-                    + u16::from(frame_bgra[destination]) * (255 - alpha) / 255)
-                    .min(255) as u8;
-                frame_bgra[destination + 1] = (u16::from(overlay[source + 1])
-                    + u16::from(frame_bgra[destination + 1]) * (255 - alpha) / 255)
-                    .min(255) as u8;
-                frame_bgra[destination + 2] = (u16::from(overlay[source])
-                    + u16::from(frame_bgra[destination + 2]) * (255 - alpha) / 255)
-                    .min(255) as u8;
-                frame_bgra[destination + 3] = 255;
-            }
+            } else {
+                native_annotation_bounds(*annotation)
+            };
+            let padding = match *annotation {
+                NativeAnnotation::Rectangle { stroke_width, .. }
+                | NativeAnnotation::Ellipse { stroke_width, .. }
+                | NativeAnnotation::Freehand { stroke_width, .. } => stroke_width + 2,
+                NativeAnnotation::Arrow { stroke_width, .. } => stroke_width * 4 + 2,
+                NativeAnnotation::Number { .. } => 3,
+                _ => 0,
+            };
+            left = left.min(bounds.x - padding);
+            top = top.min(bounds.y - padding);
+            right = right.max(bounds.x + bounds.width + padding);
+            bottom = bottom.max(bounds.y + bounds.height + padding);
         }
+        left = left.max(selection.x);
+        top = top.max(selection.y);
+        right = right.min(selection.x + selection.width);
+        bottom = bottom.min(selection.y + selection.height);
+        if right <= left || bottom <= top {
+            return None;
+        }
+        let bounds = RectInfo {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        };
+        scratch.clear();
+        let row_bytes = bounds.width as usize * 4;
+        for y in top..bottom {
+            let start = (y as usize * state.width as usize + left as usize) * 4;
+            scratch.extend_from_slice(&state.composite_bgra[start..start + row_bytes]);
+        }
+        for pixel in scratch.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        apply_native_annotations(scratch, bounds, &annotations);
+        for pixel in scratch.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        Some(bounds)
     }
 
     fn draft_annotation(
@@ -4750,10 +4976,10 @@ mod platform {
         }
     }
 
-    fn update_composite(state: &mut SelectorState, visible_rect: Option<RectInfo>) {
+    fn update_composite(state: &mut SelectorState, visible_rect: Option<RectInfo>) -> bool {
         let next_key = visible_rect.map(|rect| rect_key(rect, state.corner_radius));
         if state.composite_rect == next_key {
-            return;
+            return false;
         }
         if let Some((x, y, width, height, _)) = state.composite_rect {
             copy_rect_pixels(
@@ -4778,6 +5004,7 @@ mod platform {
             );
         }
         state.composite_rect = next_key;
+        true
     }
 
     fn copy_rect_pixels(source: &[u8], destination: &mut [u8], stride: i32, rect: RectInfo) {

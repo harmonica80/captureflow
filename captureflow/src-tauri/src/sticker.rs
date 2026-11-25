@@ -1,8 +1,33 @@
 use crate::sticker_store::{self, StickerRecord};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tauri::Manager;
 
-pub fn open(app: &tauri::AppHandle, image_path: String, x: i32, y: i32) -> Result<(), String> {
-    let image = image::open(Path::new(&image_path))
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditableDocument {
+    pub source_image: String,
+    pub canvas_width: u32,
+    pub canvas_height: u32,
+    pub objects: serde_json::Value,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditRequest {
+    id: u64,
+    project_path: String,
+}
+
+struct StickerImage {
+    width: i32,
+    height: i32,
+    corner_radius: i32,
+    bgra: Vec<u8>,
+}
+
+fn load_image(image_path: &str) -> Result<StickerImage, String> {
+    let image = image::open(Path::new(image_path))
         .map_err(|error| format!("無法讀取貼圖圖片：{error}"))?
         .into_rgba8();
     let (width, height) = image.dimensions();
@@ -13,35 +38,82 @@ pub fn open(app: &tauri::AppHandle, image_path: String, x: i32, y: i32) -> Resul
     for pixel in bgra.chunks_exact_mut(4) {
         pixel.swap(0, 2);
     }
-    let corner_radius = infer_corner_radius(&bgra, width as i32, height as i32);
+    Ok(StickerImage {
+        width: width as i32,
+        height: height as i32,
+        corner_radius: infer_corner_radius(&bgra, width as i32, height as i32),
+        bgra,
+    })
+}
+
+fn save_document(
+    app: &tauri::AppHandle,
+    document: Option<EditableDocument>,
+) -> Result<Option<String>, String> {
+    document
+        .map(|document| {
+            let project_path = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| error.to_string())?
+                .join("projects")
+                .join(format!(
+                    "sticker-{}.captureflow.json",
+                    sticker_store::next_id()
+                ));
+            crate::annotation::save_project(
+                app,
+                &document.source_image,
+                document.canvas_width,
+                document.canvas_height,
+                document.objects,
+                Some(project_path.to_string_lossy().into_owned()),
+            )
+        })
+        .transpose()
+}
+
+pub fn open(
+    app: &tauri::AppHandle,
+    image_path: String,
+    x: i32,
+    y: i32,
+    document: Option<EditableDocument>,
+) -> Result<u64, String> {
+    let image = load_image(&image_path)?;
+    let project_path = save_document(app, document)?;
     let persistence_path = sticker_store::path(app)?;
     let record = StickerRecord {
         id: sticker_store::next_id(),
         image_path,
+        project_path,
         x,
         y,
-        width: width as i32,
-        height: height as i32,
+        width: image.width,
+        height: image.height,
         opacity: 255,
         locked: false,
         click_through: false,
     };
-    sticker_store::upsert(&persistence_path, &record);
+    let id = record.id;
 
+    let app = app.clone();
     std::thread::Builder::new()
         .name("captureflow-sticker".into())
-        .spawn(move || {
-            platform::run(
-                record,
-                persistence_path,
-                width as i32,
-                height as i32,
-                corner_radius,
-                bgra,
-            )
-        })
+        .spawn(move || platform::run(app, record, persistence_path, image))
         .map_err(|error| format!("無法啟動貼圖視窗：{error}"))?;
-    Ok(())
+    Ok(id)
+}
+
+pub fn update(
+    app: &tauri::AppHandle,
+    id: u64,
+    image_path: String,
+    document: EditableDocument,
+) -> Result<(), String> {
+    let image = load_image(&image_path)?;
+    let project_path = save_document(app, Some(document))?;
+    platform::replace(id, image_path, project_path, image)
 }
 
 pub fn restore(app: &tauri::AppHandle) {
@@ -49,30 +121,15 @@ pub fn restore(app: &tauri::AppHandle) {
         return;
     };
     for record in sticker_store::load(&persistence_path) {
-        let Ok(image) = image::open(Path::new(&record.image_path)) else {
+        let Ok(image) = load_image(&record.image_path) else {
             sticker_store::remove(&persistence_path, record.id);
             continue;
         };
-        let image = image.into_rgba8();
-        let (width, height) = image.dimensions();
-        let mut bgra = image.into_raw();
-        for pixel in bgra.chunks_exact_mut(4) {
-            pixel.swap(0, 2);
-        }
-        let corner_radius = infer_corner_radius(&bgra, width as i32, height as i32);
         let persistence_path = persistence_path.clone();
+        let app = app.clone();
         let _ = std::thread::Builder::new()
             .name("captureflow-sticker-restore".into())
-            .spawn(move || {
-                platform::run(
-                    record,
-                    persistence_path,
-                    width as i32,
-                    height as i32,
-                    corner_radius,
-                    bgra,
-                )
-            });
+            .spawn(move || platform::run(app, record, persistence_path, image));
     }
 }
 
@@ -91,8 +148,16 @@ fn infer_corner_radius(bgra: &[u8], width: i32, height: i32) -> i32 {
 
 #[cfg(windows)]
 mod platform {
-    use super::{sticker_store, StickerRecord};
-    use std::{cell::RefCell, mem::size_of, path::PathBuf};
+    use super::{sticker_store, EditRequest, StickerImage, StickerRecord};
+    use std::{
+        cell::RefCell,
+        collections::HashMap,
+        mem::size_of,
+        path::PathBuf,
+        sync::{mpsc, LazyLock, Mutex},
+        time::Duration,
+    };
+    use tauri::{Emitter, Manager};
     use windows::{
         core::w,
         Win32::{
@@ -123,15 +188,15 @@ mod platform {
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
                     GetClientRect, GetCursorPos, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
-                    GetWindowRect, KillTimer, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-                    SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos,
-                    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, GWL_EXSTYLE, HTCAPTION,
-                    HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG, SM_CXVIRTUALSCREEN,
-                    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_DEFERERASE,
-                    SWP_NOACTIVATE, SWP_NOCOPYBITS, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY,
-                    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST,
-                    WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
-                    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+                    GetWindowRect, KillTimer, PostMessageW, PostQuitMessage, RegisterClassW,
+                    SetForegroundWindow, SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW,
+                    SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
+                    GWL_EXSTYLE, HTCAPTION, HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MSG,
+                    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+                    SWP_DEFERERASE, SWP_NOACTIVATE, SWP_NOCOPYBITS, SW_HIDE, SW_SHOW,
+                    WINDOW_EX_STYLE, WM_APP, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONUP,
+                    WM_MOUSEWHEEL, WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSW,
+                    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
                 },
             },
         },
@@ -142,9 +207,63 @@ mod platform {
         static STATE: RefCell<Option<StickerState>> = const { RefCell::new(None) };
     }
 
+    const REPLACE_IMAGE: u32 = WM_APP + 1;
+    struct Replacement {
+        image_path: String,
+        project_path: Option<String>,
+        image: StickerImage,
+        done: mpsc::Sender<()>,
+    }
+
+    struct ActiveSticker {
+        hwnd: isize,
+        replacement: Option<Replacement>,
+    }
+
+    static ACTIVE: LazyLock<Mutex<HashMap<u64, ActiveSticker>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    pub fn replace(
+        id: u64,
+        image_path: String,
+        project_path: Option<String>,
+        image: StickerImage,
+    ) -> Result<(), String> {
+        let (done, receiver) = mpsc::channel();
+        {
+            let mut active = ACTIVE.lock().map_err(|_| "貼圖狀態無法讀取。")?;
+            let sticker = active.get_mut(&id).ok_or("這張貼圖已關閉，可重新釘選。")?;
+            if sticker.replacement.is_some() {
+                return Err("貼圖更新中，請稍候再試。".into());
+            }
+            sticker.replacement = Some(Replacement {
+                image_path,
+                project_path,
+                image,
+                done,
+            });
+            if let Err(error) = unsafe {
+                PostMessageW(
+                    Some(HWND(sticker.hwnd as _)),
+                    REPLACE_IMAGE,
+                    WPARAM(0),
+                    LPARAM(0),
+                )
+            } {
+                sticker.replacement = None;
+                return Err(format!("無法更新貼圖：{error}"));
+            }
+        }
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "未收到貼圖更新確認。".to_owned())
+    }
+
     struct StickerState {
+        app: tauri::AppHandle,
         record_id: u64,
         image_path: String,
+        project_path: Option<String>,
         persistence_path: PathBuf,
         source_width: i32,
         source_height: i32,
@@ -164,19 +283,25 @@ mod platform {
     }
 
     pub fn run(
+        app: tauri::AppHandle,
         record: StickerRecord,
         persistence_path: PathBuf,
-        source_width: i32,
-        source_height: i32,
-        corner_radius: i32,
-        bgra: Vec<u8>,
+        image: StickerImage,
     ) {
+        let StickerImage {
+            width: source_width,
+            height: source_height,
+            corner_radius,
+            bgra,
+        } = image;
         let scale_percent =
             (record.width as f64 / source_width.max(1) as f64 * 100.0).round() as i32;
         STATE.with(|state| {
             *state.borrow_mut() = Some(StickerState {
+                app,
                 record_id: record.id,
                 image_path: record.image_path.clone(),
+                project_path: record.project_path,
                 persistence_path,
                 source_width,
                 source_height,
@@ -196,6 +321,9 @@ mod platform {
             });
         });
         let _ = unsafe { run_window(record.x, record.y, record.width, record.height) };
+        if let Ok(mut active) = ACTIVE.lock() {
+            active.remove(&record.id);
+        }
         STATE.with(|state| *state.borrow_mut() = None);
     }
 
@@ -284,6 +412,19 @@ mod platform {
             let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT.0 as isize);
         }
+        STATE.with(|state| {
+            if let Some(state) = state.borrow().as_ref() {
+                if let Ok(mut active) = ACTIVE.lock() {
+                    active.insert(
+                        state.record_id,
+                        ActiveSticker {
+                            hwnd: hwnd.0 as isize,
+                            replacement: None,
+                        },
+                    );
+                }
+            }
+        });
         persist_current(hwnd);
         apply_sticker_region(hwnd);
         ShowWindow(hwnd, SW_SHOW);
@@ -311,6 +452,14 @@ mod platform {
         lparam: LPARAM,
     ) -> LRESULT {
         match message {
+            REPLACE_IMAGE => {
+                apply_replacement(hwnd);
+                LRESULT(0)
+            }
+            WM_KEYDOWN if wparam.0 == 0x71 => {
+                request_edit();
+                LRESULT(0)
+            }
             WM_PAINT => {
                 paint(hwnd);
                 LRESULT(0)
@@ -509,6 +658,7 @@ mod platform {
                 .unwrap_or(0)
         });
         if radius <= 0 {
+            SetWindowRgn(hwnd, None, true);
             return;
         }
         let region = CreateRoundRectRgn(
@@ -666,7 +816,71 @@ mod platform {
             adjust_opacity(hwnd, 16);
         } else if point.0 < 208 {
             toggle_click_through(hwnd);
+        } else if point.0 >= client.right - 101 && point.0 < client.right - 49 {
+            request_edit();
         }
+    }
+
+    fn request_edit() {
+        let request = STATE.with(|state| {
+            let state = state.borrow();
+            let state = state.as_ref()?;
+            Some((
+                state.app.clone(),
+                EditRequest {
+                    id: state.record_id,
+                    project_path: state.project_path.clone()?,
+                },
+            ))
+        });
+        if let Some((app, request)) = request {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = app.emit("captureflow://edit-sticker", request);
+            }
+        }
+    }
+
+    unsafe fn apply_replacement(hwnd: HWND) {
+        let Some((width, height, done)) = STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let state = state.as_mut()?;
+            let replacement = ACTIVE
+                .lock()
+                .ok()?
+                .get_mut(&state.record_id)?
+                .replacement
+                .take()?;
+            state.source_width = replacement.image.width;
+            state.source_height = replacement.image.height;
+            state.corner_radius = replacement.image.corner_radius;
+            state.bgra = replacement.image.bgra;
+            state.project_path = replacement.project_path;
+            state.image_path = replacement.image_path;
+            let width = (state.source_width as f64 * state.scale).round().max(1.0) as i32;
+            let height = (state.source_height as f64 * state.scale).round().max(1.0) as i32;
+            Some((width, height, replacement.done))
+        }) else {
+            return;
+        };
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                rect.left,
+                rect.top,
+                width,
+                height,
+                SWP_NOACTIVATE,
+            );
+        }
+        apply_sticker_region(hwnd);
+        invalidate_sticker_and_toolbar(hwnd);
+        persist_current(hwnd);
+        let _ = done.send(());
     }
 
     unsafe fn toggle_lock(hwnd: HWND) {
@@ -718,6 +932,7 @@ mod platform {
                 &StickerRecord {
                     id: state.record_id,
                     image_path: state.image_path.clone(),
+                    project_path: state.project_path.clone(),
                     x: rect.left,
                     y: rect.top,
                     width: rect.right - rect.left,
@@ -755,7 +970,7 @@ mod platform {
         let virtual_right = virtual_left + virtual_width;
         let virtual_bottom = virtual_top + virtual_height;
         let sticker_width = sticker_rect.right - sticker_rect.left;
-        let toolbar_width = 380.min(virtual_width);
+        let toolbar_width = 435.min(virtual_width);
         let toolbar_x = (sticker_rect.left + (sticker_width - toolbar_width) / 2)
             .clamp(virtual_left, virtual_right - toolbar_width);
         let toolbar_y = if sticker_rect.top - 44 >= virtual_top {
@@ -884,11 +1099,14 @@ mod platform {
         } else {
             draw_text(dc, 218, 11, &status);
         }
+        if state.project_path.is_some() {
+            draw_text(dc, width - 94, 11, "編輯");
+        }
         SelectObject(dc, old_font);
 
         let separator_pen = CreatePen(PS_SOLID, 1, COLORREF(0x00D0_CBC6));
         let old_pen = SelectObject(dc, separator_pen.into());
-        for x in [53, 105, 157, 209, width - 49] {
+        for x in [53, 105, 157, 209, width - 102, width - 49] {
             MoveToEx(dc, x, 8, None);
             LineTo(dc, x, 32);
         }
@@ -1062,15 +1280,21 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::StickerRecord;
+    use super::{StickerImage, StickerRecord};
     use std::path::PathBuf;
     pub fn run(
+        _app: tauri::AppHandle,
         _record: StickerRecord,
         _path: PathBuf,
-        _source_width: i32,
-        _source_height: i32,
-        _corner_radius: i32,
-        _bgra: Vec<u8>,
+        _image: StickerImage,
     ) {
+    }
+    pub fn replace(
+        _id: u64,
+        _path: String,
+        _project_path: Option<String>,
+        _image: StickerImage,
+    ) -> Result<(), String> {
+        Err("貼圖目前只支援 Windows。".into())
     }
 }
