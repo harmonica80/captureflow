@@ -781,18 +781,21 @@ fn draw_rgba_text(
     outline_color: u32,
     outline_width: i32,
 ) {
-    let font_paths = [
-        r"C:\Windows\Fonts\msjh.ttc",
-        r"C:\Windows\Fonts\segoeui.ttf",
-    ];
-    let Some(bytes) = font_paths.iter().find_map(|path| fs::read(path).ok()) else {
-        return;
-    };
-    let settings = fontdue::FontSettings {
-        collection_index: 0,
-        ..Default::default()
-    };
-    let Ok(font) = fontdue::Font::from_bytes(bytes, settings) else {
+    // A drag can redraw existing numbered markers at every pointer update.
+    // Keep the parsed font instead of reopening and parsing it per marker.
+    static FONT: std::sync::OnceLock<Option<fontdue::Font>> = std::sync::OnceLock::new();
+    let font = FONT.get_or_init(|| {
+        [
+            r"C:\Windows\Fonts\msjh.ttc",
+            r"C:\Windows\Fonts\segoeui.ttf",
+        ]
+        .into_iter()
+        .find_map(|path| {
+            let bytes = fs::read(path).ok()?;
+            fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
+        })
+    });
+    let Some(font) = font.as_ref() else {
         return;
     };
     let content = String::from_utf16_lossy(utf16);
@@ -3229,6 +3232,14 @@ mod platform {
         let (Some(selection), Some(&last)) = (state.selection, state.freehand_points.last()) else {
             return;
         };
+        let current = clamp_to_rect(pointer, selection);
+        let dx = i64::from(current.0 - last.0);
+        let dy = i64::from(current.1 - last.1);
+        // Nearby input already describes the curve; only query Windows when
+        // two delivered points leave a visible gap.
+        if dx * dx + dy * dy < 64 {
+            return;
+        }
         let sample = MOUSEMOVEPOINT {
             x: (pointer.0 + state.origin_x) & 0xffff,
             y: (pointer.1 + state.origin_y) & 0xffff,
