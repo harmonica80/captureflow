@@ -39,6 +39,23 @@ struct LongCaptureResult {
     height: i32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum NumberShape {
+    #[default]
+    Circle,
+    RoundedRectangle,
+}
+
+impl NumberShape {
+    fn aspect_ratio(self) -> f32 {
+        match self {
+            Self::Circle => 1.0,
+            Self::RoundedRectangle => 1.35,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum LineStyle {
@@ -107,6 +124,8 @@ enum NativeAnnotation {
         number: u32,
         size: i32,
         color: u32,
+        #[serde(default)]
+        shape: NumberShape,
     },
     Mosaic {
         start_x: i32,
@@ -643,38 +662,41 @@ fn apply_native_annotations(
                 number,
                 size,
                 color,
+                shape,
             } => {
-                let radius = size.clamp(18, 96) / 2;
-                if let Some(rect) = SkRect::from_ltrb(
-                    (x - selection.x - radius) as f32,
-                    (y - selection.y - radius) as f32,
-                    (x - selection.x + radius) as f32,
-                    (y - selection.y + radius) as f32,
+                let center = (x - selection.x, y - selection.y);
+                let height = size.clamp(18, 96) as f32;
+                let width = height * shape.aspect_ratio();
+                let mut path = PathBuilder::new();
+                if let Some(rect) = SkRect::from_xywh(
+                    center.0 as f32 - width / 2.0,
+                    center.1 as f32 - height / 2.0,
+                    width,
+                    height,
                 ) {
-                    let mut path = PathBuilder::new();
-                    path.push_oval(rect);
-                    if let Some(path) = path.finish() {
-                        pixmap.fill_path(
-                            &path,
-                            &skia_paint(color),
-                            FillRule::Winding,
-                            Transform::identity(),
-                            None,
-                        );
+                    match shape {
+                        NumberShape::Circle => path.push_oval(rect),
+                        NumberShape::RoundedRectangle => {
+                            push_rounded_rectangle(&mut path, rect, height * 0.22);
+                        }
                     }
                 }
-                let label: Vec<u16> = number.to_string().encode_utf16().collect();
-                draw_rgba_text(
-                    pixmap.data_mut(),
-                    selection.width,
-                    selection.height,
-                    x - selection.x - radius / 3,
-                    y - selection.y - radius / 2,
-                    &label,
-                    radius.max(12),
-                    0x00FF_FFFF,
+                if let Some(path) = path.finish() {
+                    pixmap.fill_path(
+                        &path,
+                        &skia_paint(color),
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
+                }
+                draw_number_label(
+                    &mut pixmap,
+                    center,
+                    number,
+                    height * 0.55,
+                    width * 0.75,
                     color,
-                    0,
                 );
             }
             NativeAnnotation::Mosaic {
@@ -769,20 +791,93 @@ fn fill_skia_polygon(pixmap: &mut PixmapMut<'_>, points: &[(i32, i32)], color: u
     }
 }
 
-fn draw_rgba_text(
-    pixels: &mut [u8],
-    width: i32,
-    height: i32,
-    x: i32,
-    y: i32,
-    utf16: &[u16],
-    font_size: i32,
-    color: u32,
-    outline_color: u32,
-    outline_width: i32,
+fn push_rounded_rectangle(path: &mut PathBuilder, rect: SkRect, radius: f32) {
+    let (left, top, right, bottom) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    path.move_to(left + radius, top);
+    path.line_to(right - radius, top);
+    path.quad_to(right, top, right, top + radius);
+    path.line_to(right, bottom - radius);
+    path.quad_to(right, bottom, right - radius, bottom);
+    path.line_to(left + radius, bottom);
+    path.quad_to(left, bottom, left, bottom - radius);
+    path.line_to(left, top + radius);
+    path.quad_to(left, top, left + radius, top);
+    path.close();
+}
+
+fn draw_number_label(
+    pixmap: &mut PixmapMut<'_>,
+    center: (i32, i32),
+    number: u32,
+    mut font_size: f32,
+    max_width: f32,
+    background: u32,
 ) {
-    // A drag can redraw existing numbered markers at every pointer update.
-    // Keep the parsed font instead of reopening and parsing it per marker.
+    let Some(font) = annotation_font() else {
+        return;
+    };
+    let label = number.to_string();
+    let layout = |size| {
+        let mut cursor: f32 = 0.0;
+        let (mut left, mut top, mut right, mut bottom) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        let glyphs: Vec<_> = label
+            .chars()
+            .map(|digit| {
+                let metrics = font.metrics(digit, size);
+                let x = cursor.round() as i32 + metrics.xmin;
+                let y = -metrics.ymin - metrics.height as i32;
+                cursor += metrics.advance_width;
+                left = left.min(x);
+                top = top.min(y);
+                right = right.max(x + metrics.width as i32);
+                bottom = bottom.max(y + metrics.height as i32);
+                (digit, x, y)
+            })
+            .collect();
+        (glyphs, left, top, right, bottom)
+    };
+    let (mut glyphs, mut left, mut top, mut right, mut bottom) = layout(font_size);
+    let ink_width = (right - left) as f32;
+    if ink_width > max_width {
+        font_size *= max_width / ink_width;
+        (glyphs, left, top, right, bottom) = layout(font_size);
+    }
+    let x_offset = center.0 - (left + right) / 2;
+    let y_offset = center.1 - (top + bottom) / 2;
+    let [red, green, blue, _] = colorref_to_rgba(background);
+    let linear = |channel| {
+        let value = f64::from(channel) / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
+    let ink = if luminance >= 0.179 { 0 } else { 0x00FF_FFFF };
+    let (width, height) = (pixmap.width() as i32, pixmap.height() as i32);
+    let pixels = pixmap.data_mut();
+    for (digit, x, y) in glyphs {
+        let (metrics, bitmap) = font.rasterize(digit, font_size);
+        for (index, alpha) in bitmap
+            .into_iter()
+            .enumerate()
+            .filter(|&(_, alpha)| alpha != 0)
+        {
+            blend_rgba_pixel(
+                pixels,
+                width,
+                height,
+                x_offset + x + (index % metrics.width) as i32,
+                y_offset + y + (index / metrics.width) as i32,
+                ink,
+                alpha,
+            );
+        }
+    }
+}
+
+fn annotation_font() -> Option<&'static fontdue::Font> {
     static FONT: std::sync::OnceLock<Option<fontdue::Font>> = std::sync::OnceLock::new();
     let font = FONT.get_or_init(|| {
         [
@@ -795,7 +890,22 @@ fn draw_rgba_text(
             fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
         })
     });
-    let Some(font) = font.as_ref() else {
+    font.as_ref()
+}
+
+fn draw_rgba_text(
+    pixels: &mut [u8],
+    width: i32,
+    height: i32,
+    x: i32,
+    y: i32,
+    utf16: &[u16],
+    font_size: i32,
+    color: u32,
+    outline_color: u32,
+    outline_width: i32,
+) {
+    let Some(font) = annotation_font() else {
         return;
     };
     let content = String::from_utf16_lossy(utf16);
@@ -1167,9 +1277,9 @@ fn editor_objects(annotations: &[NativeAnnotation], area: RectInfo) -> Vec<serde
                     "fontSize": font_size, "fontFamily": "Microsoft JhengHei", "bold": false, "italic": false, "color": hex(color),
                     "strokeWidth": 1, "outlineColor": hex(outline_color), "outlineWidth": outline_width})
             }
-            NativeAnnotation::Number { x: px, y: py, number, size, color } => {
+            NativeAnnotation::Number { x: px, y: py, number, size, color, shape } => {
                 json!({"type": "number", "x": x(px), "y": y(py), "number": number, "size": size,
-                    "color": hex(color), "strokeWidth": 1})
+                    "color": hex(color), "strokeWidth": 1, "shape": shape})
             }
             NativeAnnotation::Mosaic { start_x, start_y, end_x, end_y, block_size } => {
                 let (x, y, width, height) = bounds(start_x, start_y, end_x, end_y);
@@ -1248,8 +1358,8 @@ fn path_string(path: PathBuf) -> String {
 mod platform {
     use super::{
         apply_native_annotations, best_vertical_overlap, crop_rgba, curved_arrow_points,
-        frame_difference, tapered_arrow_points, LineStyle, LongCaptureResult, NativeAnnotation,
-        SelectedArea,
+        frame_difference, push_rounded_rectangle, tapered_arrow_points, LineStyle,
+        LongCaptureResult, NativeAnnotation, NumberShape, SelectedArea,
     };
     use crate::capture::RectInfo;
     use std::{cell::RefCell, collections::HashMap, mem::size_of, sync::mpsc};
@@ -1492,9 +1602,19 @@ mod platform {
         Arrow,
         Text,
         Number,
+        RoundedNumber,
         Mosaic,
         Eraser,
         Line,
+    }
+
+    impl AnnotationTool {
+        fn for_number(shape: NumberShape) -> Self {
+            match shape {
+                NumberShape::Circle => Self::Number,
+                NumberShape::RoundedRectangle => Self::RoundedNumber,
+            }
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -1526,6 +1646,7 @@ mod platform {
         ToolbarButton::Tool(AnnotationTool::Arrow),
         ToolbarButton::Tool(AnnotationTool::Text),
         ToolbarButton::Tool(AnnotationTool::Number),
+        ToolbarButton::Tool(AnnotationTool::RoundedNumber),
         ToolbarButton::Tool(AnnotationTool::Mosaic),
         ToolbarButton::Tool(AnnotationTool::Eraser),
         ToolbarButton::Color,
@@ -1535,7 +1656,7 @@ mod platform {
         ToolbarButton::Redo,
         ToolbarButton::Delete,
     ];
-    const TOOLBAR_COLOR_INDEX: usize = 13;
+    const TOOLBAR_COLOR_INDEX: usize = 14;
     const CAPTURE_BUTTON_COUNT: usize = 4;
     const TOOL_SIZE: i32 = 44;
 
@@ -1584,7 +1705,9 @@ mod platform {
         fn tool_thickness(&self) -> i32 {
             match self.annotation_tool {
                 Some(AnnotationTool::Text) => (self.stroke_width * 2 + 16).clamp(8, 160),
-                Some(AnnotationTool::Number) => (self.stroke_width * 2 + 43).clamp(18, 96),
+                Some(AnnotationTool::Number | AnnotationTool::RoundedNumber) => {
+                    (self.stroke_width * 2 + 43).clamp(18, 96)
+                }
                 Some(AnnotationTool::Mosaic) => (self.stroke_width + 8).clamp(4, 48),
                 _ => self.stroke_width,
             }
@@ -1717,8 +1840,8 @@ mod platform {
                     });
                     self.caret_visible = true;
                 }
-                NativeAnnotation::Number { number, .. } => {
-                    self.annotation_tool = Some(AnnotationTool::Number);
+                NativeAnnotation::Number { number, shape, .. } => {
+                    self.annotation_tool = Some(AnnotationTool::for_number(shape));
                     self.number_input = Some(NumberInput {
                         index,
                         digits: number.to_string(),
@@ -2208,7 +2331,9 @@ mod platform {
                                     }
                                     NativeAnnotation::Text { .. } => AnnotationTool::Text,
                                     NativeAnnotation::Freehand { .. } => AnnotationTool::Freehand,
-                                    NativeAnnotation::Number { .. } => AnnotationTool::Number,
+                                    NativeAnnotation::Number { shape, .. } => {
+                                        AnnotationTool::for_number(shape)
+                                    }
                                     NativeAnnotation::Mosaic { .. } => AnnotationTool::Mosaic,
                                 });
                                 if let Some(style) = native_line_style(state.annotations[index]) {
@@ -2242,7 +2367,10 @@ mod platform {
                                             replace_on_type: false,
                                         });
                                         state.caret_visible = true;
-                                    } else if matches!(tool, AnnotationTool::Number) {
+                                    } else if matches!(
+                                        tool,
+                                        AnnotationTool::Number | AnnotationTool::RoundedNumber
+                                    ) {
                                         state.save_undo();
                                         state.annotations.push(NativeAnnotation::Number {
                                             x: point.0,
@@ -2250,6 +2378,11 @@ mod platform {
                                             number: state.next_number,
                                             size: state.tool_thickness(),
                                             color: state.current_color,
+                                            shape: if tool == AnnotationTool::RoundedNumber {
+                                                NumberShape::RoundedRectangle
+                                            } else {
+                                                NumberShape::Circle
+                                            },
                                         });
                                         state.next_number = state.next_number.saturating_add(1);
                                         state.selected_annotation =
@@ -3576,6 +3709,10 @@ mod platform {
                 "編號 · 點兩下物件可重編",
                 "Number · Double-click an object to edit",
             ),
+            ToolbarButton::Tool(AnnotationTool::RoundedNumber) => (
+                "圓角矩形編號 · 點兩下物件可重編",
+                "Rounded rectangle number · Double-click an object to edit",
+            ),
             ToolbarButton::Tool(AnnotationTool::Mosaic) => ("馬賽克", "Mosaic"),
             ToolbarButton::Tool(AnnotationTool::Eraser) => ("橡皮擦", "Eraser"),
             ToolbarButton::Color => ("選擇顏色", "Choose color"),
@@ -3852,6 +3989,7 @@ mod platform {
                         AnnotationTool::Arrow => 3,
                         AnnotationTool::Text => 4,
                         AnnotationTool::Number => 5,
+                        AnnotationTool::RoundedNumber => 15,
                         AnnotationTool::Mosaic => 6,
                         AnnotationTool::Eraser => 7,
                         AnnotationTool::Line => 14,
@@ -4089,8 +4227,12 @@ mod platform {
                 path.move_to(22.0, 12.0);
                 path.line_to(22.0, 32.0);
             }
-            5 => {
-                if let Some(rect) = tiny_skia::Rect::from_xywh(12.0, 12.0, 20.0, 20.0) {
+            5 | 15 => {
+                if index == 15 {
+                    if let Some(rect) = tiny_skia::Rect::from_xywh(9.0, 12.0, 26.0, 20.0) {
+                        push_rounded_rectangle(&mut path, rect, 4.0);
+                    }
+                } else if let Some(rect) = tiny_skia::Rect::from_xywh(12.0, 12.0, 20.0, 20.0) {
                     path.push_oval(rect);
                 }
                 path.move_to(22.0, 17.0);
@@ -4408,7 +4550,10 @@ mod platform {
                 end_y,
                 block_size: state.tool_thickness(),
             }),
-            AnnotationTool::Text | AnnotationTool::Number | AnnotationTool::Eraser => None,
+            AnnotationTool::Text
+            | AnnotationTool::Number
+            | AnnotationTool::RoundedNumber
+            | AnnotationTool::Eraser => None,
         }
     }
 
@@ -4708,12 +4853,17 @@ mod platform {
                     height: max_y - min_y,
                 }
             }
-            NativeAnnotation::Number { x, y, size, .. } => RectInfo {
-                x: x - size / 2,
-                y: y - size / 2,
-                width: size,
-                height: size,
-            },
+            NativeAnnotation::Number {
+                x, y, size, shape, ..
+            } => {
+                let width = (size as f32 * shape.aspect_ratio()).ceil() as i32;
+                RectInfo {
+                    x: x - width / 2,
+                    y: y - size / 2,
+                    width,
+                    height: size,
+                }
+            }
             NativeAnnotation::Text {
                 x,
                 y,
@@ -5050,12 +5200,18 @@ mod platform {
                 number,
                 size: _,
                 color,
+                shape,
             } => NativeAnnotation::Number {
                 x,
                 y,
                 number,
-                size: ((point.0 - x).abs().max((point.1 - y).abs()) * 2).clamp(18, 96),
+                size: (2.0
+                    * (((point.0 - x).abs() as f32 / shape.aspect_ratio())
+                        .max((point.1 - y).abs() as f32)))
+                .round()
+                .clamp(18.0, 96.0) as i32,
                 color,
+                shape,
             },
             NativeAnnotation::Mosaic {
                 start_x,
@@ -5241,12 +5397,14 @@ mod platform {
                 number,
                 size,
                 color,
+                shape,
             } => NativeAnnotation::Number {
                 x: x + dx,
                 y: y + dy,
                 number,
                 size,
                 color,
+                shape,
             },
             NativeAnnotation::Mosaic {
                 start_x,

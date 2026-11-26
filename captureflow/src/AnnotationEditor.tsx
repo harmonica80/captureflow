@@ -14,6 +14,7 @@ type Tool =
   | "arrow"
   | "text"
   | "number"
+  | "rounded-number"
   | "mosaic"
   | "eraser"
   | "crop";
@@ -64,6 +65,7 @@ type TextObject = Base & {
 };
 type NumberObject = Base & {
   type: "number";
+  shape?: "circle" | "roundedRectangle";
   x: number;
   y: number;
   number: number;
@@ -133,6 +135,7 @@ const labelsZh: Record<Tool, string> = {
   arrow: "箭頭",
   text: "文字",
   number: "序號",
+  "rounded-number": "圓角矩形編號",
   mosaic: "馬賽克",
   eraser: "橡皮擦",
   crop: "裁切",
@@ -145,6 +148,7 @@ const labelsEn: Record<Tool, string> = {
   arrow: "Arrow",
   text: "Text",
   number: "Number",
+  "rounded-number": "Rounded rectangle number",
   mosaic: "Mosaic",
   eraser: "Eraser",
   crop: "Crop",
@@ -182,9 +186,13 @@ function Icon({ type }: { type: Tool }) {
           <path d="M5 5h14M12 5v14" {...p} />
         </>
       )}
-      {type === "number" && (
+      {(type === "number" || type === "rounded-number") && (
         <>
-          <circle cx="12" cy="12" r="8" {...p} />
+          {type === "number" ? (
+            <circle cx="12" cy="12" r="8" {...p} />
+          ) : (
+            <rect x="3" y="5" width="18" height="14" rx="3" {...p} />
+          )}
           <path d="M10 9l2-1v8" {...p} />
         </>
       )}
@@ -379,14 +387,64 @@ function bounds(o: Annotation) {
       width: Math.max(o.fontSize, o.text.length * o.fontSize * 0.9),
       height: o.fontSize * 1.35,
     };
-  if (o.type === "number")
-    return {
-      x: o.x - o.size / 2,
-      y: o.y - o.size / 2,
-      width: o.size,
-      height: o.size,
-    };
+  if (o.type === "number") {
+    const width = o.size * (o.shape === "roundedRectangle" ? 1.35 : 1);
+    return { x: o.x - width / 2, y: o.y - o.size / 2, width, height: o.size };
+  }
   return { x: 0, y: 0, width: 0, height: 0 };
+}
+
+const numberFont = "Segoe UI, sans-serif";
+let numberContext: CanvasRenderingContext2D | null = null;
+
+function NumberBadge({ object }: { object: NumberObject }) {
+  const { x, y, width, height } = bounds(object);
+  const label = String(object.number);
+  let fontSize = height * 0.55;
+  let labelX = object.x;
+  let labelY = object.y + fontSize * 0.35;
+  numberContext ??= document.createElement("canvas").getContext("2d");
+  if (numberContext) {
+    numberContext.font = `700 ${fontSize}px ${numberFont}`;
+    let ink = numberContext.measureText(label);
+    const inkWidth = ink.actualBoundingBoxLeft + ink.actualBoundingBoxRight;
+    const maxWidth = width * 0.75;
+    if (inkWidth > maxWidth) {
+      fontSize *= maxWidth / inkWidth;
+      numberContext.font = `700 ${fontSize}px ${numberFont}`;
+      ink = numberContext.measureText(label);
+    }
+    labelX += (ink.actualBoundingBoxLeft - ink.actualBoundingBoxRight) / 2;
+    labelY = object.y + (ink.actualBoundingBoxAscent - ink.actualBoundingBoxDescent) / 2;
+  }
+  const hex = object.color.match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1];
+  const rgb = hex?.length === 3 ? hex.replace(/./g, (digit) => digit + digit) : hex;
+  const luminance = rgb ? [0.2126, 0.7152, 0.0722].reduce((sum, weight, i) => {
+    const channel = parseInt(rgb.slice(i * 2, i * 2 + 2), 16) / 255;
+    return sum + weight * (channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4);
+  }, 0) : 0;
+
+  return (
+    <>
+      {object.shape === "roundedRectangle" ? (
+        <rect x={x} y={y} width={width} height={height} rx={height * 0.22} fill={object.color} />
+      ) : (
+        <circle cx={object.x} cy={object.y} r={height / 2} fill={object.color} />
+      )}
+      <text
+        x={labelX}
+        y={labelY}
+        fill={luminance >= 0.179 ? "#000" : "#fff"}
+        fontFamily={numberFont}
+        fontSize={fontSize}
+        fontWeight="700"
+      >
+        {label}
+      </text>
+    </>
+  );
 }
 function move(o: Annotation, dx: number, dy: number): Annotation {
   if (o.type === "rectangle" || o.type === "ellipse" || o.type === "mosaic")
@@ -1007,11 +1065,12 @@ export default function AnnotationEditor({
       });
       return;
     }
-    if (tool === "number") {
+    if (tool === "number" || tool === "rounded-number") {
       snapshot();
       const o: NumberObject = {
         id: crypto.randomUUID(),
         type: "number",
+        shape: tool === "rounded-number" ? "roundedRectangle" : "circle",
         x: p.x,
         y: p.y,
         number: nextNumber,
@@ -1162,7 +1221,7 @@ export default function AnnotationEditor({
       };
     svg.setPointerCapture(e.pointerId);
     setSelected(o.id);
-    setTool(o.type === "mosaic" ? "mosaic" : o.type);
+    setTool(o.type === "number" && o.shape === "roundedRectangle" ? "rounded-number" : o.type);
     setColor(o.color);
     setStrokeWidth(o.strokeWidth);
     if (o.type === "number") setNumberSize(o.size);
@@ -1552,6 +1611,7 @@ export default function AnnotationEditor({
                 className={tool === t ? "selected icon-tool" : "icon-tool"}
                 title={labels[t]}
                 aria-label={labels[t]}
+                  aria-pressed={tool === t}
                 onClick={() => {
                   setTool(t);
                   if (t !== "crop") setCropRect(null);
@@ -1782,7 +1842,7 @@ export default function AnnotationEditor({
           </label>
         </div>
       )}
-      {(tool === "number" || selected?.type === "number") && (
+      {(tool === "number" || tool === "rounded-number" || selected?.type === "number") && (
         <div className="property-bar">
           <label>
             {selected?.type === "number" ? "修改序號" : "下一個序號"}
@@ -1991,18 +2051,7 @@ export default function AnnotationEditor({
                 if (o.type === "number")
                   return (
                     <g key={o.id} {...common}>
-                      <circle cx={o.x} cy={o.y} r={o.size / 2} fill={o.color} />
-                      <text
-                        x={o.x}
-                        y={o.y}
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        fill="#fff"
-                        fontSize={o.size * 0.55}
-                        fontWeight="700"
-                      >
-                        {o.number}
-                      </text>
+                      <NumberBadge object={o} />
                     </g>
                   );
                 return (

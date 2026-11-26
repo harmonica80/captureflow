@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
       invoke: async (command: string, args: any = {}) => {
         w.qa.calls.push({ command, args });
         switch (command) {
-          case "plugin:app|version": return "0.5.19";
+          case "plugin:app|version": return "0.5.20";
           case "get_settings": return { captureShortcut: "Alt+Shift+A", historyLimit: 20, language: "zh-TW", defaultSaveDirectory: "", launchAtStartup: false };
           case "list_monitors": return [{ deviceName: "DISPLAY1" }];
           case "list_capture_history": return w.qa.history;
@@ -90,6 +90,68 @@ async function draw(page: Page, x = 0.2, y = 0.2) {
   await page.mouse.move(box.x + box.width * (x + 0.15), box.y + box.height * (y + 0.15));
   await page.mouse.up();
 }
+
+test("number shapes share a sequence and center their visible digits", async ({ page }) => {
+  await page.evaluate(() => (window as any).qa.emit("captureflow://selection-complete", {
+    imagePath: "capture.png", metadataPath: "capture.json", width: 600, height: 400,
+    selection: { x: 0, y: 0, width: 600, height: 400 },
+    objects: [
+      { id: "legacy", type: "number", x: 80, y: 80, number: 1, size: 64, color: "#ff3b30", strokeWidth: 1 },
+      { id: "native", type: "number", shape: "roundedRectangle", x: 200, y: 80, number: 26, size: 64, color: "#ff3b30", strokeWidth: 1 },
+    ],
+  }));
+  const legacy = page.locator('[data-object-id="legacy"]');
+  const native = page.locator('[data-object-id="native"]');
+  await expect(legacy.locator("circle")).toBeVisible();
+  await expect(native.locator("rect").first()).toHaveAttribute("rx", "14.08");
+  for (const badge of [legacy, native]) {
+    const offset = await badge.evaluate(async (group) => {
+      const shape = group.firstElementChild as SVGGraphicsElement;
+      const box = shape.getBBox();
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("width", "128");
+      svg.setAttribute("height", "128");
+      svg.setAttribute("viewBox", `${box.x + box.width / 2 - 64} ${box.y + box.height / 2 - 64} 128 128`);
+      svg.append(group.cloneNode(true));
+      const image = new Image();
+      image.src = "data:image/svg+xml," + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 128;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(image, 0, 0);
+      const { data } = ctx.getImageData(0, 0, 128, 128);
+      let left = 128, right = -1, top = 128, bottom = -1;
+      for (let y = 32; y < 96; y++) {
+        for (let x = 32; x < 96; x++) {
+          const i = (y * 128 + x) * 4;
+          if (data[i + 3] < 250 || data[i] > 100 || data[i + 1] > 50 || data[i + 2] > 50) continue;
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+      }
+      return { width: right - left + 1, x: (left + right + 1) / 2 - 64, y: (top + bottom + 1) / 2 - 64 };
+    });
+    expect(offset.width).toBeGreaterThan(5);
+    expect(Math.abs(offset.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(offset.y)).toBeLessThanOrEqual(2);
+  }
+  const circleTool = page.getByRole("button", { name: "序號", exact: true });
+  expect(await circleTool.evaluate(button => button.nextElementSibling?.getAttribute("aria-label"))).toBe("圓角矩形編號");
+  await page.getByRole("button", { name: "圓角矩形編號" }).click();
+  const box = (await page.locator(".annotation-stage svg").boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
+  const added = page.locator("[data-object-id]").last();
+  await expect(added.locator("text")).toHaveText("27");
+  await expect(added.locator("rect").first()).toHaveAttribute("rx", "8.8");
+  await page.getByRole("spinbutton", { name: "修改序號" }).fill("33");
+  await expect(added.locator("text")).toHaveText("33");
+  await expect.poll(() => page.evaluate(() => (window as any).qa.saved.at(-1)?.objects.at(-1))).toMatchObject({
+    type: "number", shape: "roundedRectangle", number: 33,
+  });
+});
 
 test("crop undo/redo restores source, latest annotations and preceding edit history", async ({ page }) => {
   await draw(page);
