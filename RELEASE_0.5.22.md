@@ -9,4 +9,12 @@
 - 前端建置、14 項 Edge 回歸測試、Rust 格式檢查與差異檢查通過。已測試相同字色與底色可儲存，合成圖片像素保留原色，並可切回自動字色。
 - 使用 Windows GDI 離屏繪製量測，兩個外框標籤各有 14 階中間灰度，粗細數值有 12 階，均具有平滑字緣。
 - 第二列標籤前景 #252525，對淺灰底 #F5F5F5 為 14.06:1，對色塊按鈕一般白底、滑過背景及選取背景均至少 10.27:1。文字色圖示的 A 依色塊顏色選黑字或白字，最低約 4.58:1。
-- Windows GitHub Actions 建置、免安裝 EXE 與原生截取互動實測待完成。
+- Windows 免安裝 EXE 實測截取第二列顯示，「外框色」、「外框粗細」及粗細數值分別量測到 12、14、4 種中間灰階，已確認文字字緣平滑。文字外框設定可帶進主編輯器。
+- 實測兩種編號的文字色與背景色都位於第一列，且兩個色塊開啟各自的色盤。圓形的手動同色配色與圓角矩形的自動白字，從截取畫面帶入主編輯器並儲存至 JSON 後均正確。已還原並以 SHA-256 比對 253 份原有應用程式資料。
+
+## 測試版下載
+
+- [Windows 免安裝測試版 ZIP](https://github.com/harmonica80/captureflow/actions/runs/45735108111/artifacts/15077479886) · [GitHub Actions 建置紀錄](https://github.com/harmonica80/captureflow/actions/runs/45735108111)
+- GitHub 下載需要登入，成品保存至 2027 年 2 月 24 日 09:20（臺灣時間）。
+- ZIP 內為 `CaptureFlow-portable.exe`，版本 0.5.22，來源提交 `270b5ab`，大小 6,771,200 bytes。
+- EXE 的 SHA-256 為 `FE95D0CFFF13DA5D925D712ACAEF7B0F0C8C0F8FE2218E9ABAC2760AB05452F0`，已與 Actions 紀錄核對。
