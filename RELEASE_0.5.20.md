@@ -8,4 +8,11 @@
 
 - 前端建置、13 項 Edge 瀏覽器回歸測試、Rust 格式檢查與差異檢查通過。新增測試檢查工具順序、兩種形狀的數字像素位置、連續編號、修改序號與儲存形狀。
 - 依不透明底色切換黑字或白字，理論最低對比約 4.58:1。預設紅底 #FF3B30 搭配黑字對比約 5.92:1。新增工具的原生滑過提示色 #FAFAFA 與底色 #252525 對比約 14.69:1。原生工具一般、滑過及選取狀態的圖示對比皆高於 10:1。
-- Windows GitHub Actions 建置、免安裝 EXE 與原生截取操作實測待完成。
+- 使用 Windows 免安裝 EXE 實測原生截取框。圓形編號數字距水平、垂直中心均為 0.5 像素，圓角矩形為 0 像素。兩種物件帶入主編輯器後仍可編輯。實測在主編輯器新增圓角矩形編號 28、將原有的 27 改為 42，儲存後形狀與序號均正確。測試後已還原並以 SHA-256 比對 253 份原有應用程式資料。
+
+## 測試版下載
+
+- [Windows 免安裝測試版 ZIP](https://github.com/harmonica80/captureflow/actions/runs/45729200068/artifacts/15076755167) · [GitHub Actions 建置紀錄](https://github.com/harmonica80/captureflow/actions/runs/45729200068)
+- GitHub 下載需要登入，成品保存至 2027 年 2 月 24 日 08:30（臺灣時間）。
+- ZIP 內為 `CaptureFlow-portable.exe`，版本 0.5.20，來源提交 `d8ce2b4`，大小 6,760,448 bytes。
+- EXE 的 SHA-256 為 `5FEADE0A89B3C5514F70E18228669B8789AC95C91873412C08C41E5A8779EDCB`，已與 Actions 紀錄核對。
