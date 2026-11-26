@@ -126,6 +126,8 @@ enum NativeAnnotation {
         color: u32,
         #[serde(default)]
         shape: NumberShape,
+        #[serde(default)]
+        label_color: Option<u32>,
     },
     Mosaic {
         start_x: i32,
@@ -663,6 +665,7 @@ fn apply_native_annotations(
                 size,
                 color,
                 shape,
+                label_color,
             } => {
                 let center = (x - selection.x, y - selection.y);
                 let height = size.clamp(18, 96) as f32;
@@ -696,7 +699,7 @@ fn apply_native_annotations(
                     number,
                     height * 0.55,
                     width * 0.75,
-                    color,
+                    number_ink(label_color, color),
                 );
             }
             NativeAnnotation::Mosaic {
@@ -811,7 +814,7 @@ fn draw_number_label(
     number: u32,
     mut font_size: f32,
     max_width: f32,
-    background: u32,
+    ink: u32,
 ) {
     let Some(font) = annotation_font() else {
         return;
@@ -844,17 +847,6 @@ fn draw_number_label(
     }
     let x_offset = center.0 - (left + right) / 2;
     let y_offset = center.1 - (top + bottom) / 2;
-    let [red, green, blue, _] = colorref_to_rgba(background);
-    let linear = |channel| {
-        let value = f64::from(channel) / 255.0;
-        if value <= 0.04045 {
-            value / 12.92
-        } else {
-            ((value + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
-    let ink = if luminance >= 0.179 { 0 } else { 0x00FF_FFFF };
     let (width, height) = (pixmap.width() as i32, pixmap.height() as i32);
     let pixels = pixmap.data_mut();
     for (digit, x, y) in glyphs {
@@ -875,6 +867,37 @@ fn draw_number_label(
             );
         }
     }
+}
+
+fn color_luminance(color: u32) -> f64 {
+    let [red, green, blue, _] = colorref_to_rgba(color);
+    let linear = |channel| {
+        let value = f64::from(channel) / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+}
+
+fn number_contrast(foreground: u32, background: u32) -> f64 {
+    let a = color_luminance(foreground);
+    let b = color_luminance(background);
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+fn number_ink(foreground: Option<u32>, background: u32) -> u32 {
+    foreground
+        .filter(|&ink| number_contrast(ink, background) >= 4.5)
+        .unwrap_or_else(|| {
+            if color_luminance(background) >= 0.179 {
+                0
+            } else {
+                0x00FF_FFFF
+            }
+        })
 }
 
 fn annotation_font() -> Option<&'static fontdue::Font> {
@@ -1277,9 +1300,9 @@ fn editor_objects(annotations: &[NativeAnnotation], area: RectInfo) -> Vec<serde
                     "fontSize": font_size, "fontFamily": "Microsoft JhengHei", "bold": false, "italic": false, "color": hex(color),
                     "strokeWidth": 1, "outlineColor": hex(outline_color), "outlineWidth": outline_width})
             }
-            NativeAnnotation::Number { x: px, y: py, number, size, color, shape } => {
+            NativeAnnotation::Number { x: px, y: py, number, size, color, shape, label_color } => {
                 json!({"type": "number", "x": x(px), "y": y(py), "number": number, "size": size,
-                    "color": hex(color), "strokeWidth": 1, "shape": shape})
+                    "color": hex(color), "strokeWidth": 1, "shape": shape, "labelColor": label_color.map(hex)})
             }
             NativeAnnotation::Mosaic { start_x, start_y, end_x, end_y, block_size } => {
                 let (x, y, width, height) = bounds(start_x, start_y, end_x, end_y);
@@ -1358,8 +1381,9 @@ fn path_string(path: PathBuf) -> String {
 mod platform {
     use super::{
         apply_native_annotations, best_vertical_overlap, crop_rgba, curved_arrow_points,
-        frame_difference, push_rounded_rectangle, tapered_arrow_points, LineStyle,
-        LongCaptureResult, NativeAnnotation, NumberShape, SelectedArea,
+        frame_difference, number_contrast, number_ink, push_rounded_rectangle,
+        tapered_arrow_points, LineStyle, LongCaptureResult, NativeAnnotation, NumberShape,
+        SelectedArea,
     };
     use crate::capture::RectInfo;
     use std::{cell::RefCell, collections::HashMap, mem::size_of, sync::mpsc};
@@ -1541,7 +1565,10 @@ mod platform {
         hovered_annotation: Option<usize>,
         selected_annotation: Option<usize>,
         current_color: u32,
-        color_palette_open: bool,
+        color_target: Option<ColorTarget>,
+        number_background: u32,
+        number_label_color: Option<u32>,
+        number_color_error: bool,
         text_outline_color: u32,
         text_outline_width: i32,
         text_input: Option<TextInput>,
@@ -1551,6 +1578,20 @@ mod platform {
         caret_visible: bool,
         long_capture: Option<LongCaptureState>,
         sender: Option<mpsc::Sender<Option<SelectedArea>>>,
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum ColorTarget {
+        Main,
+        Outline,
+        NumberBackground,
+        NumberLabel,
+    }
+
+    #[derive(Clone, Copy)]
+    enum AnnotationProperty {
+        Color(ColorTarget),
+        OutlineWidth(i32),
     }
 
     struct LongCaptureState {
@@ -1661,6 +1702,108 @@ mod platform {
     const TOOL_SIZE: i32 = 44;
 
     impl SelectorState {
+        fn number_tool_active(&self) -> bool {
+            matches!(
+                self.annotation_tool,
+                Some(AnnotationTool::Number | AnnotationTool::RoundedNumber)
+            )
+        }
+
+        fn selected_object(&self) -> Option<NativeAnnotation> {
+            self.selected_annotation
+                .map(|index| self.annotations[index])
+        }
+
+        fn number_colors(&self) -> (u32, Option<u32>) {
+            match self.selected_object() {
+                Some(NativeAnnotation::Number {
+                    color, label_color, ..
+                }) => (color, label_color),
+                _ => (self.number_background, self.number_label_color),
+            }
+        }
+
+        fn set_number_colors(&mut self, background: u32, foreground: Option<u32>) {
+            self.number_color_error =
+                foreground.is_some_and(|ink| number_contrast(ink, background) < 4.5);
+            if self.number_color_error {
+                return;
+            }
+            self.number_background = background;
+            self.number_label_color = foreground;
+            if let Some(index) = self.selected_annotation {
+                if matches!(self.annotations[index], NativeAnnotation::Number { .. }) {
+                    self.save_undo();
+                    if let NativeAnnotation::Number {
+                        color, label_color, ..
+                    } = &mut self.annotations[index]
+                    {
+                        *color = background;
+                        *label_color = foreground;
+                    }
+                }
+            }
+        }
+
+        fn text_outline(&self) -> (u32, i32) {
+            if let Some(input) = &self.text_input {
+                (input.outline_color, input.outline_width)
+            } else if let Some(NativeAnnotation::Text {
+                outline_color,
+                outline_width,
+                ..
+            }) = self.selected_object()
+            {
+                (outline_color, outline_width)
+            } else {
+                (self.text_outline_color, self.text_outline_width)
+            }
+        }
+
+        fn adjust_text_outline(&mut self, step: i32) {
+            let width = (self.text_outline().1 + step).clamp(0, 12);
+            self.text_outline_width = width;
+            if let Some(input) = &mut self.text_input {
+                input.outline_width = width;
+            } else if let Some(index) = self.selected_annotation {
+                if matches!(self.annotations[index], NativeAnnotation::Text { .. }) {
+                    self.save_undo();
+                    set_text_outline_width(&mut self.annotations[index], step);
+                }
+            }
+        }
+
+        fn apply_palette_color(&mut self, target: ColorTarget, chosen: Option<u32>) {
+            match target {
+                ColorTarget::Main => {
+                    let Some(color) = chosen else { return };
+                    self.current_color = color;
+                    if let Some(input) = self.text_input.as_mut() {
+                        input.color = color;
+                    } else if let Some(index) = self.selected_annotation {
+                        self.save_undo();
+                        set_native_color(&mut self.annotations[index], color);
+                    }
+                }
+                ColorTarget::Outline => {
+                    let Some(color) = chosen else { return };
+                    self.text_outline_color = color;
+                    if let Some(input) = self.text_input.as_mut() {
+                        input.outline_color = color;
+                    } else if let Some(index) = self.selected_annotation {
+                        self.save_undo();
+                        set_text_outline_color(&mut self.annotations[index], color);
+                    }
+                }
+                ColorTarget::NumberBackground => {
+                    if let Some(color) = chosen {
+                        self.set_number_colors(color, self.number_colors().1);
+                    }
+                }
+                ColorTarget::NumberLabel => self.set_number_colors(self.number_colors().0, chosen),
+            }
+        }
+
         fn toolbar_buttons(&self) -> &'static [ToolbarButton] {
             if self.long_capture.is_some() {
                 &TOOLBAR_BUTTONS[..CAPTURE_BUTTON_COUNT]
@@ -1981,7 +2124,10 @@ mod platform {
             hovered_annotation: None,
             selected_annotation: None,
             current_color: 0x0030_3BFF,
-            color_palette_open: false,
+            color_target: None,
+            number_background: ANNOTATION_COLORS[0],
+            number_label_color: None,
+            number_color_error: false,
             text_outline_color: 0x00FF_FFFF,
             text_outline_width: 1,
             text_input: None,
@@ -2098,39 +2244,43 @@ mod platform {
                             return LRESULT(0);
                         }
                         if let Some(selection) = state.selection {
-                            if state.color_palette_open {
-                                if let Some(color_index) =
-                                    hit_color_palette(point, selection, state)
-                                {
-                                    let chosen = ANNOTATION_COLORS[color_index];
-                                    if matches!(state.annotation_tool, Some(AnnotationTool::Text))
+                            if let Some(target) = state.color_target {
+                                if let Some(color) = hit_color_palette(point, selection, state) {
+                                    let target = if target == ColorTarget::Main
+                                        && state.annotation_tool == Some(AnnotationTool::Text)
                                         && GetKeyState(VK_SHIFT.0 as i32) < 0
                                     {
-                                        state.text_outline_color = chosen;
-                                        if let Some(input) = state.text_input.as_mut() {
-                                            input.outline_color = chosen;
-                                        }
-                                        if let Some(index) = state.selected_annotation {
-                                            state.save_undo();
-                                            set_text_outline_color(
-                                                &mut state.annotations[index],
-                                                chosen,
-                                            );
-                                        }
+                                        ColorTarget::Outline
                                     } else {
-                                        state.current_color = chosen;
-                                        if let Some(input) = state.text_input.as_mut() {
-                                            input.color = chosen;
-                                        }
-                                        if let Some(index) = state.selected_annotation {
-                                            state.save_undo();
-                                            set_native_color(&mut state.annotations[index], chosen);
-                                        }
-                                    }
-                                    state.color_palette_open = false;
+                                        target
+                                    };
+                                    state.apply_palette_color(target, color);
+                                    state.color_target = None;
                                     InvalidateRect(Some(hwnd), None, false);
                                     return LRESULT(0);
                                 }
+                                if point_in_rect(point, color_palette_rect(selection, state)) {
+                                    return LRESULT(0);
+                                }
+                            }
+                            let layout = annotation_toolbar_layout(selection, state);
+                            if layout
+                                .properties
+                                .is_some_and(|rect| point_in_rect(point, rect))
+                            {
+                                match hit_annotation_property(point, &layout, state) {
+                                    Some(AnnotationProperty::Color(target)) => {
+                                        state.color_target =
+                                            (state.color_target != Some(target)).then_some(target);
+                                    }
+                                    Some(AnnotationProperty::OutlineWidth(step)) => {
+                                        state.color_target = None;
+                                        state.adjust_text_outline(step);
+                                    }
+                                    None => state.color_target = None,
+                                }
+                                InvalidateRect(Some(hwnd), None, false);
+                                return LRESULT(0);
                             }
                             if let Some(button) = hit_annotation_toolbar(point, selection, state) {
                                 if state.number_input.is_some()
@@ -2174,6 +2324,7 @@ mod platform {
                                     }
                                     ToolbarButton::Tool(tool) => {
                                         state.commit_value();
+                                        state.number_color_error = false;
                                         state.annotation_tool =
                                             if state.annotation_tool == Some(tool) {
                                                 None
@@ -2183,7 +2334,18 @@ mod platform {
                                         state.selected_annotation = None;
                                     }
                                     ToolbarButton::Color => {
-                                        state.color_palette_open = !state.color_palette_open;
+                                        let target = if state.number_tool_active() {
+                                            ColorTarget::NumberBackground
+                                        } else if state.annotation_tool
+                                            == Some(AnnotationTool::Text)
+                                            && GetKeyState(VK_SHIFT.0 as i32) < 0
+                                        {
+                                            ColorTarget::Outline
+                                        } else {
+                                            ColorTarget::Main
+                                        };
+                                        state.color_target =
+                                            (state.color_target != Some(target)).then_some(target);
                                     }
                                     ToolbarButton::Thinner | ToolbarButton::Thicker => {
                                         let step = if matches!(button, ToolbarButton::Thicker) {
@@ -2233,12 +2395,12 @@ mod platform {
                                     ToolbarButton::Thickness => {}
                                 }
                                 if !matches!(button, ToolbarButton::Color) {
-                                    state.color_palette_open = false;
+                                    state.color_target = None;
                                 }
                                 InvalidateRect(Some(hwnd), None, false);
                                 return LRESULT(0);
                             }
-                            state.color_palette_open = false;
+                            state.color_target = None;
                             if state.long_capture.is_some() {
                                 return LRESULT(0);
                             }
@@ -2318,6 +2480,7 @@ mod platform {
                                     return LRESULT(0);
                                 }
                                 state.selected_annotation = Some(index);
+                                state.number_color_error = false;
                                 state.hovered_annotation = Some(index);
                                 state.annotation_tool = Some(match state.annotations[index] {
                                     NativeAnnotation::Rectangle { .. } => AnnotationTool::Rectangle,
@@ -2377,7 +2540,8 @@ mod platform {
                                             y: point.1,
                                             number: state.next_number,
                                             size: state.tool_thickness(),
-                                            color: state.current_color,
+                                            color: state.number_background,
+                                            label_color: state.number_label_color,
                                             shape: if tool == AnnotationTool::RoundedNumber {
                                                 NumberShape::RoundedRectangle
                                             } else {
@@ -3167,7 +3331,8 @@ mod platform {
                             .filter(|rect| rect.width >= 2 && rect.height >= 2)
                         {
                             draw_annotation_toolbar(dc, state, rect);
-                            if state.color_palette_open {
+                            draw_annotation_properties(dc, state, rect);
+                            if state.color_target.is_some() {
                                 draw_color_palette(dc, state, rect);
                             } else if state.interaction.is_none() {
                                 draw_toolbar_hint(dc, state, rect);
@@ -3511,6 +3676,7 @@ mod platform {
 
     struct ToolbarLayout {
         bounds: RECT,
+        properties: Option<RECT>,
         monitor: RectInfo,
         columns: i32,
     }
@@ -3552,20 +3718,23 @@ mod platform {
         let columns = (monitor.width / TOOL_SIZE).clamp(1, count);
         let toolbar_width = columns * TOOL_SIZE;
         let toolbar_height = ((count + columns - 1) / columns) * TOOL_SIZE;
+        let show_properties = state.long_capture.is_none()
+            && (state.annotation_tool == Some(AnnotationTool::Text) || state.number_tool_active());
+        let total_height = toolbar_height + if show_properties { TOOL_SIZE } else { 0 };
         let right = monitor.x + monitor.width;
         let bottom = monitor.y + monitor.height;
         let left = rect
             .x
             .clamp(monitor.x, (right - toolbar_width).max(monitor.x));
         let below = (rect.y + rect.height + GAP).max(monitor.y);
-        let above = rect.y - GAP - toolbar_height;
-        let top = if below + toolbar_height <= bottom {
+        let above = rect.y - GAP - total_height;
+        let top = if below + total_height <= bottom {
             below
-        } else if above >= monitor.y && above + toolbar_height <= bottom {
+        } else if above >= monitor.y && above + total_height <= bottom {
             above
         } else {
-            (rect.y + rect.height - toolbar_height)
-                .clamp(monitor.y, (bottom - toolbar_height).max(monitor.y))
+            (rect.y + rect.height - total_height)
+                .clamp(monitor.y, (bottom - total_height).max(monitor.y))
         };
         ToolbarLayout {
             bounds: RECT {
@@ -3574,9 +3743,69 @@ mod platform {
                 right: left + toolbar_width,
                 bottom: top + toolbar_height,
             },
+            properties: show_properties.then_some(RECT {
+                left,
+                top: top + toolbar_height,
+                right: left + toolbar_width,
+                bottom: top + total_height,
+            }),
             monitor,
             columns,
         }
+    }
+
+    fn property_cells(panel: RECT) -> (RECT, RECT) {
+        let top = panel.top + 4;
+        let bottom = panel.bottom - 4;
+        let middle = (panel.left + 108).min(panel.left + (panel.right - panel.left) / 2);
+        (
+            RECT {
+                left: panel.left + 4,
+                top,
+                right: middle,
+                bottom,
+            },
+            RECT {
+                left: middle + 4,
+                top,
+                right: (middle + 160).min(panel.right - 4),
+                bottom,
+            },
+        )
+    }
+
+    fn outline_spinner(cell: RECT) -> RECT {
+        RECT {
+            left: (cell.right - 48).max(cell.left),
+            ..cell
+        }
+    }
+
+    fn hit_annotation_property(
+        point: (i32, i32),
+        layout: &ToolbarLayout,
+        state: &SelectorState,
+    ) -> Option<AnnotationProperty> {
+        let (first, second) = property_cells(layout.properties?);
+        if state.number_tool_active() {
+            if point_in_rect(point, first) {
+                return Some(AnnotationProperty::Color(ColorTarget::NumberBackground));
+            }
+            if point_in_rect(point, second) {
+                return Some(AnnotationProperty::Color(ColorTarget::NumberLabel));
+            }
+        } else if point_in_rect(point, first) {
+            return Some(AnnotationProperty::Color(ColorTarget::Outline));
+        } else {
+            let (_, up, down) = thickness_bounds(outline_spinner(second));
+            if point_in_rect(point, up) {
+                return Some(AnnotationProperty::OutlineWidth(1));
+            }
+            if point_in_rect(point, down) {
+                return Some(AnnotationProperty::OutlineWidth(-1));
+            }
+        }
+        None
     }
 
     fn hit_annotation_toolbar(
@@ -3715,6 +3944,9 @@ mod platform {
             ),
             ToolbarButton::Tool(AnnotationTool::Mosaic) => ("馬賽克", "Mosaic"),
             ToolbarButton::Tool(AnnotationTool::Eraser) => ("橡皮擦", "Eraser"),
+            ToolbarButton::Color if state.number_tool_active() => {
+                ("選擇編號背景色", "Choose number background")
+            }
             ToolbarButton::Color => ("選擇顏色", "Choose color"),
             ToolbarButton::Thinner => ("縮小筆寬或字級", "Decrease width or size"),
             ToolbarButton::Thickness => ("粗細／大小", "Stroke width or size"),
@@ -3736,7 +3968,7 @@ mod platform {
             .sum::<i32>()
             + 16;
         let layout = annotation_toolbar_layout(selection, state);
-        let toolbar = layout.bounds;
+        let toolbar = layout.properties.unwrap_or(layout.bounds);
         let monitor = layout.monitor;
         let left = (state.cursor_position.0 - width / 2).clamp(
             monitor.x,
@@ -3745,7 +3977,7 @@ mod platform {
         let top = if toolbar.bottom + 29 <= monitor.y + monitor.height {
             toolbar.bottom + 5
         } else {
-            (toolbar.top - 29).max(monitor.y)
+            (layout.bounds.top - 29).max(monitor.y)
         };
         let bounds = RECT {
             left,
@@ -3768,19 +4000,29 @@ mod platform {
 
     fn color_palette_rect(rect: RectInfo, state: &SelectorState) -> RECT {
         let layout = annotation_toolbar_layout(rect, state);
-        let toolbar = layout.bounds;
         let palette_width = 122;
-        let palette_height = 58;
-        let color_left = layout.button(TOOLBAR_COLOR_INDEX).left - 39;
+        let palette_height = if state.color_target == Some(ColorTarget::NumberLabel) {
+            84
+        } else {
+            58
+        };
+        let color_left = match (state.color_target, layout.properties) {
+            (Some(ColorTarget::Outline | ColorTarget::NumberBackground), Some(panel)) => {
+                property_cells(panel).0.left
+            }
+            (Some(ColorTarget::NumberLabel), Some(panel)) => property_cells(panel).1.left,
+            _ => layout.button(TOOLBAR_COLOR_INDEX).left - 39,
+        };
         let monitor = layout.monitor;
         let left = color_left.clamp(
             monitor.x,
             (monitor.x + monitor.width - palette_width).max(monitor.x),
         );
-        let top = if toolbar.bottom + 4 + palette_height <= monitor.y + monitor.height {
-            toolbar.bottom + 4
+        let bottom = layout.properties.unwrap_or(layout.bounds).bottom;
+        let top = if bottom + 4 + palette_height <= monitor.y + monitor.height {
+            bottom + 4
         } else {
-            (toolbar.top - 4 - palette_height).max(monitor.y)
+            (layout.bounds.top - 4 - palette_height).max(monitor.y)
         };
         RECT {
             left,
@@ -3794,7 +4036,7 @@ mod platform {
         point: (i32, i32),
         rect: RectInfo,
         state: &SelectorState,
-    ) -> Option<usize> {
+    ) -> Option<Option<u32>> {
         let palette = color_palette_rect(rect, state);
         if point.0 < palette.left + 6
             || point.0 >= palette.right - 6
@@ -3805,7 +4047,10 @@ mod platform {
         }
         let column = (point.0 - palette.left - 6) / 22;
         let row = (point.1 - palette.top - 6) / 22;
-        (column < 5 && row < 2).then_some((row * 5 + column) as usize)
+        if state.color_target == Some(ColorTarget::NumberLabel) && point.1 >= palette.top + 56 {
+            return Some(None);
+        }
+        (column < 5 && row < 2).then(|| Some(ANNOTATION_COLORS[(row * 5 + column) as usize]))
     }
 
     unsafe fn draw_color_palette(
@@ -3838,6 +4083,16 @@ mod platform {
             SelectObject(dc, previous);
             DeleteObject(brush.into());
         }
+        if state.color_target == Some(ColorTarget::NumberLabel) {
+            let automatic = if state.english { "Automatic" } else { "自動" };
+            draw_property_text(
+                dc,
+                palette.left + 10,
+                palette.top + 57,
+                automatic,
+                0x0025_2525,
+            );
+        }
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
         DeleteObject(border.into());
@@ -3868,7 +4123,7 @@ mod platform {
         (field, up, down)
     }
 
-    unsafe fn draw_thickness_spinner(dc: HDC, cell: RECT, state: &SelectorState) {
+    unsafe fn draw_thickness_spinner(dc: HDC, cell: RECT, cursor: (i32, i32), width: i32) {
         let (field, up, down) = thickness_bounds(cell);
         let border = CreateSolidBrush(COLORREF(0x0082_7570));
         FillRect(dc, &field, border);
@@ -3883,12 +4138,11 @@ mod platform {
         DeleteObject(paper.into());
 
         for (arrow, direction) in [(up, -1), (down, 1)] {
-            let background =
-                CreateSolidBrush(COLORREF(if point_in_rect(state.cursor_position, arrow) {
-                    0x00E6_ED_E0
-                } else {
-                    0x00F1_F4_F2
-                }));
+            let background = CreateSolidBrush(COLORREF(if point_in_rect(cursor, arrow) {
+                0x00E6_ED_E0
+            } else {
+                0x00F1_F4_F2
+            }));
             FillRect(dc, &arrow, background);
             DeleteObject(background.into());
             let x = (arrow.left + arrow.right) / 2;
@@ -3942,16 +4196,6 @@ mod platform {
         );
         DeleteObject(border.into());
 
-        let width = state
-            .text_input
-            .as_ref()
-            .map(|input| input.font_size)
-            .or_else(|| {
-                state
-                    .selected_annotation
-                    .map(|index| native_thickness(state.annotations[index]))
-            })
-            .unwrap_or_else(|| state.tool_thickness());
         let text: Vec<u16> = width.to_string().encode_utf16().collect();
         let mut extent = SIZE::default();
         GetTextExtentPoint32W(dc, &text, &mut extent);
@@ -3963,6 +4207,131 @@ mod platform {
             value.top + ((value.bottom - value.top - extent.cy) / 2).max(0),
             &text,
         );
+    }
+
+    unsafe fn draw_property_text(dc: HDC, x: i32, y: i32, text: &str, color: u32) {
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, COLORREF(color));
+        TextOutW(dc, x, y, &text.encode_utf16().collect::<Vec<_>>());
+    }
+
+    unsafe fn draw_annotation_properties(dc: HDC, state: &SelectorState, selection: RectInfo) {
+        let layout = annotation_toolbar_layout(selection, state);
+        let Some(panel) = layout.properties else {
+            return;
+        };
+        let brush = CreateSolidBrush(COLORREF(0x00F5_F5_F5));
+        FillRect(dc, &panel, brush);
+        DeleteObject(brush.into());
+        let label = |zh, en| if state.english { en } else { zh };
+        let (first, second) = property_cells(panel);
+        if state.number_tool_active() {
+            let (background, ink) = state.number_colors();
+            draw_property_swatch(
+                dc,
+                state,
+                first,
+                ColorTarget::NumberBackground,
+                label("背景色", "Background"),
+                background,
+            );
+            let foreground_label = if ink.is_some() {
+                label("文字色", "Text color")
+            } else {
+                label("文字色（自動）", "Text color (auto)")
+            };
+            draw_property_swatch(
+                dc,
+                state,
+                second,
+                ColorTarget::NumberLabel,
+                foreground_label,
+                number_ink(ink, background),
+            );
+        } else {
+            let (color, width) = state.text_outline();
+            draw_property_swatch(
+                dc,
+                state,
+                first,
+                ColorTarget::Outline,
+                label("外框色", "Outline"),
+                color,
+            );
+            draw_property_text(
+                dc,
+                second.left + 5,
+                second.top + 7,
+                label("外框粗細", "Outline width"),
+                0x0025_2525,
+            );
+            draw_thickness_spinner(dc, outline_spinner(second), state.cursor_position, width);
+        }
+        if state.number_color_error && state.number_tool_active() {
+            draw_property_text(
+                dc,
+                second.right + 8,
+                panel.top + 11,
+                label(
+                    "對比不足，請選擇至少 4.5:1 的配色。",
+                    "Choose colors with at least 4.5:1 contrast.",
+                ),
+                0x0020_2087,
+            );
+        }
+    }
+
+    unsafe fn draw_property_swatch(
+        dc: HDC,
+        state: &SelectorState,
+        cell: RECT,
+        target: ColorTarget,
+        text: &str,
+        color: u32,
+    ) {
+        let selected = state.color_target == Some(target);
+        let background = if selected {
+            0x00FF_DC9B
+        } else if point_in_rect(state.cursor_position, cell) {
+            0x00E6_ED_E0
+        } else {
+            0x00FF_FFFF
+        };
+        let border = CreateSolidBrush(COLORREF(0x0076_7676));
+        let brush = CreateSolidBrush(COLORREF(background));
+        FillRect(dc, &cell, border);
+        FillRect(
+            dc,
+            &RECT {
+                left: cell.left + 1,
+                top: cell.top + 1,
+                right: cell.right - 1,
+                bottom: cell.bottom - 1,
+            },
+            brush,
+        );
+        let swatch = RECT {
+            left: cell.right - 23,
+            top: cell.top + 8,
+            right: cell.right - 5,
+            bottom: cell.bottom - 8,
+        };
+        FillRect(dc, &swatch, border);
+        let color_brush = CreateSolidBrush(COLORREF(color));
+        FillRect(
+            dc,
+            &RECT {
+                left: swatch.left + 1,
+                top: swatch.top + 1,
+                right: swatch.right - 1,
+                bottom: swatch.bottom - 1,
+            },
+            color_brush,
+        );
+        draw_property_text(dc, cell.left + 5, cell.top + 7, text, 0x0025_2525);
+        DeleteObject(color_brush.into());
+        DeleteObject(brush.into());
+        DeleteObject(border.into());
     }
 
     unsafe fn draw_annotation_toolbar(
@@ -3997,9 +4366,22 @@ mod platform {
                     state.annotation_tool == Some(tool),
                     true,
                 ),
-                ToolbarButton::Color => (8, state.color_palette_open, true),
+                ToolbarButton::Color => (
+                    8,
+                    matches!(
+                        state.color_target,
+                        Some(ColorTarget::Main | ColorTarget::NumberBackground)
+                    ),
+                    true,
+                ),
                 ToolbarButton::Thickness => {
-                    draw_thickness_spinner(dc, bounds, state);
+                    let width = state
+                        .text_input
+                        .as_ref()
+                        .map(|input| input.font_size)
+                        .or_else(|| state.selected_object().map(native_thickness))
+                        .unwrap_or_else(|| state.tool_thickness());
+                    draw_thickness_spinner(dc, bounds, state.cursor_position, width);
                     continue;
                 }
                 // These actions are the two halves of the spinner, never separate cells.
@@ -4134,9 +4516,8 @@ mod platform {
             width: TOOL_SIZE,
             height: TOOL_SIZE,
         };
-        let background = if selected {
-            [155, 220, 255]
-        } else if enabled
+        let capture_action = matches!(index, 10..=13);
+        let hovered = enabled
             && point_in_rect(
                 state.cursor_position,
                 RECT {
@@ -4145,17 +4526,28 @@ mod platform {
                     right: left + TOOL_SIZE,
                     bottom: top + TOOL_SIZE,
                 },
-            )
-        {
-            [224, 237, 230]
-        } else {
-            [250, 250, 250]
+            );
+        let background = match (capture_action, selected, hovered) {
+            (true, true, _) => [198, 198, 198],
+            (true, false, true) => [204, 204, 204],
+            (true, false, false) => [218, 218, 218],
+            (false, true, _) => [155, 220, 255],
+            (false, false, true) => [224, 237, 230],
+            _ => [250, 250, 250],
         };
         let icon = ToolIcon {
             icon: index,
             background,
             ink: if enabled { 37 } else { 105 },
-            color: if index == 8 { state.current_color } else { 0 },
+            color: if index == 8 {
+                if state.number_tool_active() {
+                    state.number_colors().0
+                } else {
+                    state.current_color
+                }
+            } else {
+                0
+            },
             style: if index == 18 {
                 state.line_style
             } else {
@@ -4171,6 +4563,20 @@ mod platform {
                 draw_bgra(dc, bounds, pixels);
             }
         });
+        if capture_action && selected {
+            let active = CreateSolidBrush(COLORREF(0x0025_2525));
+            FillRect(
+                dc,
+                &RECT {
+                    left: left + 14,
+                    top: top + 36,
+                    right: left + 30,
+                    bottom: top + 38,
+                },
+                active,
+            );
+            DeleteObject(active.into());
+        }
     }
 
     fn render_toolbar_icon(icon: ToolIcon) -> Vec<u8> {
@@ -5201,6 +5607,7 @@ mod platform {
                 size: _,
                 color,
                 shape,
+                label_color,
             } => NativeAnnotation::Number {
                 x,
                 y,
@@ -5212,6 +5619,7 @@ mod platform {
                 .clamp(18.0, 96.0) as i32,
                 color,
                 shape,
+                label_color,
             },
             NativeAnnotation::Mosaic {
                 start_x,
@@ -5246,11 +5654,17 @@ mod platform {
             return IDC_ARROW;
         }
         if let Some(selection) = state.selection {
-            let toolbar = annotation_toolbar_layout(selection, state).bounds;
+            let layout = annotation_toolbar_layout(selection, state);
+            let toolbar = layout.bounds;
             let radius_button = radius_button_rect(selection, state.width, state.height);
-            let over_palette = state.color_palette_open
+            let over_palette = state.color_target.is_some()
                 && point_in_rect(point, color_palette_rect(selection, state));
-            if point_in_rect(point, toolbar) || point_in_rect(point, radius_button) || over_palette
+            if point_in_rect(point, toolbar)
+                || point_in_rect(point, radius_button)
+                || over_palette
+                || layout
+                    .properties
+                    .is_some_and(|panel| point_in_rect(point, panel))
             {
                 return IDC_ARROW;
             }
@@ -5398,6 +5812,7 @@ mod platform {
                 size,
                 color,
                 shape,
+                label_color,
             } => NativeAnnotation::Number {
                 x: x + dx,
                 y: y + dy,
@@ -5405,6 +5820,7 @@ mod platform {
                 size,
                 color,
                 shape,
+                label_color,
             },
             NativeAnnotation::Mosaic {
                 start_x,

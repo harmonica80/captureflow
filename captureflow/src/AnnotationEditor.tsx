@@ -66,6 +66,7 @@ type TextObject = Base & {
 type NumberObject = Base & {
   type: "number";
   shape?: "circle" | "roundedRectangle";
+  labelColor?: string | null;
   x: number;
   y: number;
   number: number;
@@ -397,6 +398,26 @@ function bounds(o: Annotation) {
 const numberFont = "Segoe UI, sans-serif";
 let numberContext: CanvasRenderingContext2D | null = null;
 
+function colorLuminance(color: string) {
+  const hex = color.match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1];
+  const rgb = hex?.length === 3 ? hex.replace(/./g, (digit) => digit + digit) : hex;
+  return rgb ? [0.2126, 0.7152, 0.0722].reduce((sum, weight, i) => {
+    const channel = parseInt(rgb.slice(i * 2, i * 2 + 2), 16) / 255;
+    return sum + weight * (channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4);
+  }, 0) : 0;
+}
+
+function numberContrast(foreground: string, background: string) {
+  const a = colorLuminance(foreground), b = colorLuminance(background);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+function autoNumberColor(background: string) {
+  return colorLuminance(background) >= 0.179 ? "#000000" : "#ffffff";
+}
+
 function NumberBadge({ object }: { object: NumberObject }) {
   const { x, y, width, height } = bounds(object);
   const label = String(object.number);
@@ -417,14 +438,8 @@ function NumberBadge({ object }: { object: NumberObject }) {
     labelX += (ink.actualBoundingBoxLeft - ink.actualBoundingBoxRight) / 2;
     labelY = object.y + (ink.actualBoundingBoxAscent - ink.actualBoundingBoxDescent) / 2;
   }
-  const hex = object.color.match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1];
-  const rgb = hex?.length === 3 ? hex.replace(/./g, (digit) => digit + digit) : hex;
-  const luminance = rgb ? [0.2126, 0.7152, 0.0722].reduce((sum, weight, i) => {
-    const channel = parseInt(rgb.slice(i * 2, i * 2 + 2), 16) / 255;
-    return sum + weight * (channel <= 0.04045
-      ? channel / 12.92
-      : ((channel + 0.055) / 1.055) ** 2.4);
-  }, 0) : 0;
+  const labelColor = object.labelColor && numberContrast(object.labelColor, object.color) >= 4.5
+    ? object.labelColor : autoNumberColor(object.color);
 
   return (
     <>
@@ -436,7 +451,7 @@ function NumberBadge({ object }: { object: NumberObject }) {
       <text
         x={labelX}
         y={labelY}
-        fill={luminance >= 0.179 ? "#000" : "#fff"}
+        fill={labelColor}
         fontFamily={numberFont}
         fontSize={fontSize}
         fontWeight="700"
@@ -572,6 +587,9 @@ export default function AnnotationEditor({
     [nextNumber, setNextNumber] = useState(() =>
       initialObjects.reduce((next, object) => object.type === "number" ? Math.max(next, object.number + 1) : next, 1)),
     [numberSize, setNumberSize] = useState(40),
+    [numberBackground, setNumberBackground] = useState("#ff3b30"),
+    [numberLabelColor, setNumberLabelColor] = useState<string | null>(null),
+    [numberColorError, setNumberColorError] = useState(""),
     [mosaicBlock, setMosaicBlock] = useState(18),
     [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
@@ -601,6 +619,8 @@ export default function AnnotationEditor({
   const minimapHeight = Math.max(1, Math.round(height * minimapScale));
   const selected = objects.find((o) => o.id === selectedId),
     hover = objects.find((o) => o.id === (selectedId || hoveredId));
+  const activeNumberBackground = selected?.type === "number" ? selected.color : numberBackground;
+  const activeNumberLabel = selected?.type === "number" ? selected.labelColor ?? null : numberLabelColor;
   const draft =
     start && current
       ? {
@@ -1071,11 +1091,12 @@ export default function AnnotationEditor({
         id: crypto.randomUUID(),
         type: "number",
         shape: tool === "rounded-number" ? "roundedRectangle" : "circle",
+        labelColor: numberLabelColor,
         x: p.x,
         y: p.y,
         number: nextNumber,
         size: numberSize,
-        color,
+        color: numberBackground,
         strokeWidth,
       };
       setObjects((a) => [...a, o]);
@@ -1222,9 +1243,14 @@ export default function AnnotationEditor({
     svg.setPointerCapture(e.pointerId);
     setSelected(o.id);
     setTool(o.type === "number" && o.shape === "roundedRectangle" ? "rounded-number" : o.type);
-    setColor(o.color);
+    if (o.type !== "number") setColor(o.color);
     setStrokeWidth(o.strokeWidth);
-    if (o.type === "number") setNumberSize(o.size);
+    if (o.type === "number") {
+      setNumberSize(o.size);
+      setNumberBackground(o.color);
+      setNumberLabelColor(o.labelColor ?? null);
+      setNumberColorError("");
+    }
     if (
       o.type === "rectangle" ||
       o.type === "ellipse" ||
@@ -1428,7 +1454,8 @@ export default function AnnotationEditor({
     };
     window.addEventListener("pointermove", moveFrame);
     window.addEventListener("pointerup", finish);
-  }  function updateSelected(patch: Record<string, unknown>) {
+  }
+  function updateSelected(patch: Record<string, unknown>) {
     if (!selectedId) return;
     snapshot();
     setObjects((a) =>
@@ -1436,6 +1463,18 @@ export default function AnnotationEditor({
         o.id === selectedId ? ({ ...o, ...patch } as Annotation) : o,
       ),
     );
+  }
+  function updateNumberColors(background: string, foreground: string | null) {
+    if (foreground && numberContrast(foreground, background) < 4.5) {
+      setNumberColorError(language === "en" ? "Choose colors with a contrast of at least 4.5:1." : "請選擇至少 4.5:1 的文字與背景對比。");
+      return;
+    }
+    setNumberColorError("");
+    setNumberBackground(background);
+    setNumberLabelColor(foreground);
+    if (selected?.type === "number") {
+      updateSelected({ color: background, labelColor: foreground });
+    }
   }
   async function saveProject() {
     setSaving(true);
@@ -1614,6 +1653,11 @@ export default function AnnotationEditor({
                   aria-pressed={tool === t}
                 onClick={() => {
                   setTool(t);
+                  setPaletteOpen(false);
+                  setNumberColorError("");
+                  if (t === "number" || t === "rounded-number") {
+                    setSelected(null);
+                  }
                   if (t !== "crop") setCropRect(null);
                 }}
               >
@@ -1622,14 +1666,14 @@ export default function AnnotationEditor({
             ))}
           </div>
           <div className="toolbar-divider" />
-          <button
+          {tool !== "number" && tool !== "rounded-number" && <button
             className="current-color"
             style={{ background: color }}
             title="選擇顏色"
             aria-label="選擇顏色"
             aria-expanded={paletteOpen}
             onClick={() => setPaletteOpen((open) => !open)}
-          />
+          />}
           <label className="stroke-control">
             粗細
             <input
@@ -1714,9 +1758,12 @@ export default function AnnotationEditor({
                 style={{ background: c }}
                 aria-label={`顏色 ${c}`}
                 onClick={() => {
-                  setColor(c);
                   setPaletteOpen(false);
-                  if (selected) updateSelected({ color: c });
+                  if (selected?.type === "number") updateNumberColors(c, selected.labelColor ?? null);
+                  else {
+                    setColor(c);
+                    if (selected) updateSelected({ color: c });
+                  }
                 }}
               />
             ))}
@@ -1858,6 +1905,31 @@ export default function AnnotationEditor({
               }}
             />
           </label>
+          <label>
+            {language === "en" ? "Background" : "背景色"}
+            <input
+              type="color"
+              value={activeNumberBackground}
+              onChange={(e) => updateNumberColors(e.target.value, activeNumberLabel)}
+            />
+          </label>
+          <label>
+            {language === "en" ? "Text color" : "文字色"}
+            <input
+              type="color"
+              value={activeNumberLabel ?? autoNumberColor(activeNumberBackground)}
+              onChange={(e) => updateNumberColors(activeNumberBackground, e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            aria-pressed={activeNumberLabel === null}
+            className={activeNumberLabel === null ? "active" : undefined}
+            onClick={() => updateNumberColors(activeNumberBackground, null)}
+          >
+            {language === "en" ? "Automatic text color" : "自動文字色"}
+          </button>
+          {numberColorError && <span className="number-color-error" role="alert">{numberColorError}</span>}
         </div>
       )}
       {tool === "mosaic" && (

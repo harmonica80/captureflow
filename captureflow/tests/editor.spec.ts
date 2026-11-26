@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
       invoke: async (command: string, args: any = {}) => {
         w.qa.calls.push({ command, args });
         switch (command) {
-          case "plugin:app|version": return "0.5.20";
+          case "plugin:app|version": return "0.5.21";
           case "get_settings": return { captureShortcut: "Alt+Shift+A", historyLimit: 20, language: "zh-TW", defaultSaveDirectory: "", launchAtStartup: false };
           case "list_monitors": return [{ deviceName: "DISPLAY1" }];
           case "list_capture_history": return w.qa.history;
@@ -238,12 +238,41 @@ test("clear history cancellation keeps editor; confirmation closes after save", 
   expect(await page.evaluate(() => (window as any).qa.saved.at(-1).objects.length)).toBe(1);
 });
 
-test("quit awaits the latest save", async ({ page }) => {
+test("the close dialog keeps three buttons in one row and quit awaits the latest save", async ({ page }) => {
   await draw(page);
+  await page.setViewportSize({ width: 360, height: 740 });
   await page.evaluate(() => { (window as any).qa.emit("tauri://close-requested"); });
+  const dialog = page.getByRole("dialog", { name: "關閉 CaptureFlow" });
+  await expect(dialog.getByRole("button", { name: "取消", exact: true })).toBeFocused();
+  const actions = await dialog.getByRole("button").evaluateAll((buttons) =>
+    buttons.map(button => { const rect = button.getBoundingClientRect(); return { top: rect.top, left: rect.left, right: rect.right }; }));
+  expect(actions).toHaveLength(3);
+  expect(actions.every(button => button.top === actions[0].top)).toBe(true);
+  expect(actions[2].right).toBeLessThan(360);
   await page.getByRole("button", { name: "結束應用程式", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).qa.calls.at(-1).command)).toBe("plugin:window|destroy");
   expect(await page.evaluate(() => (window as any).qa.saved.at(-1).objects.length)).toBe(1);
+});
+
+test("a number keeps its custom colors and rejects insufficient contrast", async ({ page }) => {
+  await page.getByRole("button", { name: "圓角矩形編號", exact: true }).click();
+  const background = page.getByLabel("背景色", { exact: true });
+  const foreground = page.getByLabel("文字色", { exact: true });
+  await background.fill("#ffff00");
+  await foreground.fill("#000080");
+  const box = (await page.locator(".annotation-stage svg").boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
+  const badge = page.locator('[data-object-type="number"]');
+  await expect(badge.locator("rect").first()).toHaveAttribute("fill", "#ffff00");
+  await expect(badge.locator("text")).toHaveAttribute("fill", "#000080");
+  await foreground.fill("#ffff00");
+  await expect(page.getByRole("alert")).toContainText("4.5:1");
+  await expect(badge.locator("text")).toHaveAttribute("fill", "#000080");
+  await expect.poll(() => page.evaluate(() => (window as any).qa.saved.at(-1)?.objects[0]))
+    .toMatchObject({ shape: "roundedRectangle", color: "#ffff00", labelColor: "#000080" });
+  await page.getByRole("button", { name: "自動文字色", exact: true }).click();
+  await expect(badge.locator("text")).toHaveAttribute("fill", "#000000");
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("light footer links meet project contrast in normal and hover states", async ({ page }) => {

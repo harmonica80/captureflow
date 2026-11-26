@@ -796,9 +796,9 @@ export default function App() {
             <p>{t.closeQuestion}</p>
             {error && <p className="settings-error" role="alert">{error}</p>}
             <div className="close-dialog-actions">
-              <button className="capture-button primary" disabled={transitioning} onClick={() => void withSavedEditor(async () => { setClosePrompt(false); await getCurrentWindow().hide(); })}>{t.minimize}</button>
-              <button className="capture-button danger" disabled={transitioning} onClick={() => void withSavedEditor(async () => { await getCurrentWindow().destroy(); })}>{t.quit}</button>
-              <button className="capture-button" disabled={transitioning} onClick={() => setClosePrompt(false)}>{t.cancel}</button>
+              <button type="button" disabled={transitioning} onClick={() => void withSavedEditor(async () => { setClosePrompt(false); await getCurrentWindow().hide(); })}>{t.minimize}</button>
+              <button type="button" disabled={transitioning} onClick={() => void withSavedEditor(async () => { await getCurrentWindow().destroy(); })}>{t.quit}</button>
+              <button type="button" autoFocus disabled={transitioning} onClick={() => setClosePrompt(false)}>{t.cancel}</button>
             </div>
           </section>
         </div>
