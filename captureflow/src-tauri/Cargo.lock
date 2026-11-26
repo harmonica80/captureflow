@@ -424,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "captureflow"
-version = "0.5.21"
+version = "0.5.22"
 dependencies = [
  "base64 0.22.1",
  "fontdue",

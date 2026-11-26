@@ -409,11 +409,6 @@ function colorLuminance(color: string) {
   }, 0) : 0;
 }
 
-function numberContrast(foreground: string, background: string) {
-  const a = colorLuminance(foreground), b = colorLuminance(background);
-  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-}
-
 function autoNumberColor(background: string) {
   return colorLuminance(background) >= 0.179 ? "#000000" : "#ffffff";
 }
@@ -438,8 +433,7 @@ function NumberBadge({ object }: { object: NumberObject }) {
     labelX += (ink.actualBoundingBoxLeft - ink.actualBoundingBoxRight) / 2;
     labelY = object.y + (ink.actualBoundingBoxAscent - ink.actualBoundingBoxDescent) / 2;
   }
-  const labelColor = object.labelColor && numberContrast(object.labelColor, object.color) >= 4.5
-    ? object.labelColor : autoNumberColor(object.color);
+  const labelColor = object.labelColor ?? autoNumberColor(object.color);
 
   return (
     <>
@@ -589,7 +583,6 @@ export default function AnnotationEditor({
     [numberSize, setNumberSize] = useState(40),
     [numberBackground, setNumberBackground] = useState("#ff3b30"),
     [numberLabelColor, setNumberLabelColor] = useState<string | null>(null),
-    [numberColorError, setNumberColorError] = useState(""),
     [mosaicBlock, setMosaicBlock] = useState(18),
     [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
@@ -1249,7 +1242,6 @@ export default function AnnotationEditor({
       setNumberSize(o.size);
       setNumberBackground(o.color);
       setNumberLabelColor(o.labelColor ?? null);
-      setNumberColorError("");
     }
     if (
       o.type === "rectangle" ||
@@ -1465,11 +1457,6 @@ export default function AnnotationEditor({
     );
   }
   function updateNumberColors(background: string, foreground: string | null) {
-    if (foreground && numberContrast(foreground, background) < 4.5) {
-      setNumberColorError(language === "en" ? "Choose colors with a contrast of at least 4.5:1." : "請選擇至少 4.5:1 的文字與背景對比。");
-      return;
-    }
-    setNumberColorError("");
     setNumberBackground(background);
     setNumberLabelColor(foreground);
     if (selected?.type === "number") {
@@ -1654,7 +1641,6 @@ export default function AnnotationEditor({
                 onClick={() => {
                   setTool(t);
                   setPaletteOpen(false);
-                  setNumberColorError("");
                   if (t === "number" || t === "rounded-number") {
                     setSelected(null);
                   }
@@ -1929,7 +1915,6 @@ export default function AnnotationEditor({
           >
             {language === "en" ? "Automatic text color" : "自動文字色"}
           </button>
-          {numberColorError && <span className="number-color-error" role="alert">{numberColorError}</span>}
         </div>
       )}
       {tool === "mosaic" && (

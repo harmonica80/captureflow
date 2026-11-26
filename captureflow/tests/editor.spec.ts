@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
       invoke: async (command: string, args: any = {}) => {
         w.qa.calls.push({ command, args });
         switch (command) {
-          case "plugin:app|version": return "0.5.21";
+          case "plugin:app|version": return "0.5.22";
           case "get_settings": return { captureShortcut: "Alt+Shift+A", historyLimit: 20, language: "zh-TW", defaultSaveDirectory: "", launchAtStartup: false };
           case "list_monitors": return [{ deviceName: "DISPLAY1" }];
           case "list_capture_history": return w.qa.history;
@@ -254,7 +254,7 @@ test("the close dialog keeps three buttons in one row and quit awaits the latest
   expect(await page.evaluate(() => (window as any).qa.saved.at(-1).objects.length)).toBe(1);
 });
 
-test("a number keeps its custom colors and rejects insufficient contrast", async ({ page }) => {
+test("a number retains explicitly chosen colors even when both are identical", async ({ page }) => {
   await page.getByRole("button", { name: "圓角矩形編號", exact: true }).click();
   const background = page.getByLabel("背景色", { exact: true });
   const foreground = page.getByLabel("文字色", { exact: true });
@@ -266,10 +266,24 @@ test("a number keeps its custom colors and rejects insufficient contrast", async
   await expect(badge.locator("rect").first()).toHaveAttribute("fill", "#ffff00");
   await expect(badge.locator("text")).toHaveAttribute("fill", "#000080");
   await foreground.fill("#ffff00");
-  await expect(page.getByRole("alert")).toContainText("4.5:1");
-  await expect(badge.locator("text")).toHaveAttribute("fill", "#000080");
+  await expect(badge.locator("text")).toHaveAttribute("fill", "#ffff00");
   await expect.poll(() => page.evaluate(() => (window as any).qa.saved.at(-1)?.objects[0]))
-    .toMatchObject({ shape: "roundedRectangle", color: "#ffff00", labelColor: "#000080" });
+    .toMatchObject({ shape: "roundedRectangle", color: "#ffff00", labelColor: "#ffff00" });
+  await page.getByRole("button", { name: "套用標註並建立置頂貼圖", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const { qa } = window as any;
+    const image = qa.calls.find((call: any) => call.command === "save_composited_image")?.args;
+    const marker = qa.stickerDocument?.objects[0];
+    if (!image || !marker) return false;
+    const x = Math.round(marker.x), y = Math.round(marker.y);
+    for (let row = y - 8; row <= y + 8; row++) {
+      for (let column = x - 8; column <= x + 8; column++) {
+        const i = (row * image.width + column) * 4;
+        if (image.rgba[i] !== 255 || image.rgba[i + 1] !== 255 || image.rgba[i + 2] !== 0) return false;
+      }
+    }
+    return true;
+  })).toBe(true);
   await page.getByRole("button", { name: "自動文字色", exact: true }).click();
   await expect(badge.locator("text")).toHaveAttribute("fill", "#000000");
   await expect(page.getByRole("alert")).toHaveCount(0);
