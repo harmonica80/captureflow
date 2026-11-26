@@ -12,7 +12,12 @@
 - Windows 免安裝 EXE 實測截取第二列顯示，「外框色」、「外框粗細」及粗細數值分別量測到 12、14、4 種中間灰階，已確認文字字緣平滑。文字外框設定可帶進主編輯器。
 - 實測兩種編號的文字色與背景色都位於第一列，且兩個色塊開啟各自的色盤。圓形的手動同色配色與圓角矩形的自動白字，從截取畫面帶入主編輯器並儲存至 JSON 後均正確。已還原並以 SHA-256 比對 253 份原有應用程式資料。
 
-## 測試版下載
+## 正式版下載
+
+- [Windows 免安裝正式版 EXE](https://github.com/harmonica80/captureflow/releases/download/v0.5.22/CaptureFlow-portable.exe) · [GitHub 正式發佈頁](https://github.com/harmonica80/captureflow/releases/tag/v0.5.22)
+- 正式版使用下方已通過 Windows 實測的同一份 EXE，下載無須登入。
+
+## 測試版建置紀錄
 
 - [Windows 免安裝測試版 ZIP](https://github.com/harmonica80/captureflow/actions/runs/45735108111/artifacts/15077479886) · [GitHub Actions 建置紀錄](https://github.com/harmonica80/captureflow/actions/runs/45735108111)
 - GitHub 下載需要登入，成品保存至 2027 年 2 月 24 日 09:20（臺灣時間）。
